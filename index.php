@@ -2,21 +2,111 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/app/Config/Env.php';
+require_once __DIR__ . '/app/Services/SessionService.php';
 require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
+require_once __DIR__ . '/app/Services/AuthService.php';
+require_once __DIR__ . '/app/Middleware/AuthMiddleware.php';
+require_once __DIR__ . '/app/Controllers/AuthController.php';
 
+use App\Controllers\AuthController;
 use App\Config\Env;
 use App\Database\HealthCheck;
+use App\Middleware\AuthMiddleware;
+use App\Services\AuthService;
 
 Env::load(__DIR__ . '/.env');
 date_default_timezone_set(Env::get('APP_TIMEZONE', 'Asia/Seoul'));
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+function jsonResponse(array $body, int $status = 200): never
+{
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function readJsonPayload(): array
+{
+    $rawBody = file_get_contents('php://input');
+
+    if ($rawBody === false || trim($rawBody) === '') {
+        return [];
+    }
+
+    $payload = json_decode($rawBody, true);
+
+    if (!is_array($payload)) {
+        throw new \InvalidArgumentException('유효한 JSON 요청 본문이 필요합니다.');
+    }
+
+    return $payload;
+}
+
+function authRuntimeStatus(\RuntimeException $e): int
+{
+    $message = $e->getMessage();
+
+    if ($message === '이미 가입된 이메일입니다.') {
+        return 409;
+    }
+
+    if (
+        $message === '이메일 또는 비밀번호가 올바르지 않습니다.' ||
+        $message === '로그인이 필요합니다.' ||
+        $message === '세션 사용자를 찾을 수 없습니다.'
+    ) {
+        return 401;
+    }
+
+    if ($message === '접근 권한이 없습니다.') {
+        return 403;
+    }
+
+    return 400;
+}
+
+if (str_starts_with($path, '/api/')) {
+    $authService = new AuthService();
+    $authController = new AuthController($authService, new AuthMiddleware($authService));
+
+    try {
+        $result = match ([$method, $path]) {
+            ['POST', '/api/auth/signup'] => $authController->signup(readJsonPayload()),
+            ['POST', '/api/auth/login'] => $authController->login(readJsonPayload()),
+            ['POST', '/api/auth/logout'] => $authController->logout(),
+            ['GET', '/api/me'] => $authController->me(),
+            default => null,
+        };
+
+        if ($result === null) {
+            jsonResponse(['message' => 'Not Found'], 404);
+        }
+
+        jsonResponse($result['body'], $result['status']);
+    } catch (\InvalidArgumentException $e) {
+        jsonResponse(['message' => $e->getMessage()], 422);
+    } catch (\RuntimeException $e) {
+        jsonResponse(['message' => $e->getMessage()], authRuntimeStatus($e));
+    } catch (\Throwable $e) {
+        $body = ['message' => '서버 오류가 발생했습니다.'];
+
+        if (Env::get('APP_DEBUG') === 'true') {
+            $body['debug'] = $e->getMessage();
+        }
+
+        jsonResponse($body, 500);
+    }
+}
 
 if ($path === '/health.json') {
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(HealthCheck::run(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-    exit;
+    jsonResponse(HealthCheck::run());
 }
 
 if ($path === '/favicon.ico') {

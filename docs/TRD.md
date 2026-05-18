@@ -185,6 +185,16 @@ TELEGRAM_DEFAULT_CHAT_ID=
 
 모든 조회와 변경 API는 현재 로그인 사용자와 대상 데이터의 권한을 검증해야 합니다.
 
+현재 구현:
+
+- `App\Services\AuthService`에서 회원가입, 로그인, 사용자 조회를 처리합니다.
+- `App\Services\SessionService`에서 세션 쿠키 설정, 로그인 세션 저장, 로그아웃을 처리합니다.
+- 세션 쿠키는 `HttpOnly`, `SameSite=Lax`를 사용하며, 운영 환경 또는 HTTPS 요청에서는 `Secure`를 사용합니다.
+- `App\Middleware\AuthMiddleware`에서 로그인 사용자 확인과 역할 체크를 처리합니다.
+- 공개 회원가입은 기본 `user` 역할만 생성합니다.
+- `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me`가 구현되어 있습니다.
+- 감사 로그 기록과 로그인 실패 제한은 후속 보안 작업에서 연결합니다.
+
 ## 9. 데이터 모델
 
 ### users
