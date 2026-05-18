@@ -34,13 +34,8 @@ Repository > Settings > Secrets and variables > Actions > New repository secret
 | `SSH_HOST` | 원격 서버 호스트 또는 IP |
 | `SSH_USER` | SSH 사용자명 |
 | `SSH_PASSWORD` | SSH 비밀번호 |
+| `SSH_PORT` | SSH 포트 |
 | `SSH_TARGET_DIR` | 원격 서버의 배포 대상 경로 |
-
-선택:
-
-| Secret | 설명 | 기본값 |
-| --- | --- | --- |
-| `SSH_PORT` | SSH 포트 | `22` |
 
 예시:
 
@@ -48,7 +43,7 @@ Repository > Settings > Secrets and variables > Actions > New repository secret
 SSH_HOST=example.com
 SSH_USER=myuser
 SSH_PASSWORD=서버비밀번호
-SSH_PORT=22
+SSH_PORT=2222
 SSH_TARGET_DIR=/home/myuser/html
 ```
 

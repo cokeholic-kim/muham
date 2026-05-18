@@ -19,7 +19,7 @@ jobs:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
       SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
-      SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
       SSH_TARGET_DIR: ${{ secrets.SSH_TARGET_DIR }}
 
     steps:
@@ -31,6 +31,7 @@ jobs:
           test -n "$SSH_HOST"
           test -n "$SSH_USER"
           test -n "$SSH_PASSWORD"
+          test -n "$SSH_PORT"
           test -n "$SSH_TARGET_DIR"
 
       - name: Install SSH deployment tools
