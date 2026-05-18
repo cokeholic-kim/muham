@@ -1,95 +1,43 @@
 <?php
 declare(strict_types=1);
 
-function loadEnv(string $path): void
+require_once __DIR__ . '/app/Config/Env.php';
+require_once __DIR__ . '/app/Database/HealthCheck.php';
+
+use App\Config\Env;
+use App\Database\HealthCheck;
+
+Env::load(__DIR__ . '/.env');
+date_default_timezone_set(Env::get('APP_TIMEZONE', 'Asia/Seoul'));
+
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+
+if ($path === '/health.json') {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(HealthCheck::run(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($path === '/favicon.ico') {
+    http_response_code(204);
+    exit;
+}
+
+if ($path !== '/' && $path !== '/health') {
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'Not Found';
+    exit;
+}
+
+$checks = HealthCheck::run();
+$dbStatus = $checks['status'];
+$dbMessage = $checks['message'];
+
+function h(string $value): string
 {
-    if (!is_file($path) || !is_readable($path)) {
-        return;
-    }
-
-    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    if ($lines === false) {
-        return;
-    }
-
-    foreach ($lines as $line) {
-        $line = trim($line);
-        if ($line === '' || str_starts_with($line, '#')) {
-            continue;
-        }
-
-        [$key, $value] = array_pad(explode('=', $line, 2), 2, '');
-        $key = trim($key);
-        $value = trim($value);
-
-        if ($key === '' || getenv($key) !== false) {
-            continue;
-        }
-
-        if (
-            (str_starts_with($value, '"') && str_ends_with($value, '"')) ||
-            (str_starts_with($value, "'") && str_ends_with($value, "'"))
-        ) {
-            $value = substr($value, 1, -1);
-        }
-
-        putenv($key . '=' . $value);
-        $_ENV[$key] = $value;
-        $_SERVER[$key] = $value;
-    }
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
-
-function envValue(string $key, string $default = ''): string
-{
-    $value = getenv($key);
-    return $value === false ? $default : $value;
-}
-
-loadEnv(__DIR__ . '/.env');
-
-$appTimezone = envValue('APP_TIMEZONE', 'Asia/Seoul');
-date_default_timezone_set($appTimezone);
-
-$dbStatus = 'failed';
-$dbMessage = '';
-$dbVersion = '';
-
-try {
-    $charset = envValue('DB_CHARSET', 'utf8mb4');
-    $dsn = sprintf(
-        'mysql:host=%s;port=%s;dbname=%s;charset=%s',
-        envValue('DB_HOST', 'mysql'),
-        envValue('DB_PORT', '3306'),
-        envValue('DB_DATABASE', 'muham_worktime'),
-        $charset
-    );
-
-    $pdo = new PDO($dsn, envValue('DB_USERNAME', 'muham'), envValue('DB_PASSWORD', ''), [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ]);
-
-    $stmt = $pdo->query('SELECT VERSION() AS version, DATABASE() AS database_name');
-    $row = $stmt === false ? [] : $stmt->fetch();
-
-    $dbStatus = 'ok';
-    $dbVersion = (string)($row['version'] ?? '');
-    $dbMessage = 'PDO MySQL connection is ready.';
-} catch (Throwable $e) {
-    $dbMessage = $e->getMessage();
-}
-
-$checks = [
-    'PHP Version' => PHP_VERSION,
-    'PDO Loaded' => extension_loaded('pdo') ? 'yes' : 'no',
-    'PDO MySQL Loaded' => extension_loaded('pdo_mysql') ? 'yes' : 'no',
-    'Database Host' => envValue('DB_HOST', 'mysql') . ':' . envValue('DB_PORT', '3306'),
-    'Database Name' => envValue('DB_DATABASE', 'muham_worktime'),
-    'MySQL Version' => $dbVersion !== '' ? $dbVersion : '-',
-    'Timezone' => date_default_timezone_get(),
-    'Checked At' => date('Y-m-d H:i:s'),
-];
 ?>
 <!doctype html>
 <html lang="ko">
@@ -203,16 +151,16 @@ $checks = [
         <div class="status">
             <span class="dot" aria-hidden="true"></span>
             <div>
-                <strong>Database: <?= htmlspecialchars(strtoupper($dbStatus), ENT_QUOTES, 'UTF-8') ?></strong>
-                <span><?= htmlspecialchars($dbMessage, ENT_QUOTES, 'UTF-8') ?></span>
+                <strong>Database: <?= h(strtoupper($dbStatus)) ?></strong>
+                <span><?= h($dbMessage) ?></span>
             </div>
         </div>
         <table>
             <tbody>
             <?php foreach ($checks as $label => $value): ?>
                 <tr>
-                    <th><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></th>
-                    <td><?= htmlspecialchars($value, ENT_QUOTES, 'UTF-8') ?></td>
+                    <th><?= h(ucwords(str_replace('_', ' ', $label))) ?></th>
+                    <td><?= h($value) ?></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
@@ -220,6 +168,7 @@ $checks = [
     </section>
 
     <div class="actions">
+        <a href="/health.json">JSON health check</a>
         <a href="/index.html">기존 AI 근무시간 파서 열기</a>
     </div>
 </main>

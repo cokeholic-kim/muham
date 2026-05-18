@@ -1,6 +1,7 @@
 AGENTS.md
 .env
 .ftp-deploy-sync-state.json
+.playwright-mcp/
 vendor/
 logs/*.log
 docker/mysql/

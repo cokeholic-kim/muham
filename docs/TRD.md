@@ -67,6 +67,20 @@ docker compose down -v
 │   └── apache/
 │       └── 000-default.conf
 ├── .htaccess
+├── app/
+│   ├── Config/
+│   ├── Controllers/
+│   ├── Database/
+│   ├── Middleware/
+│   ├── Models/
+│   └── Services/
+├── migrations/
+│   ├── 001_create_users.sql
+│   ├── 002_create_work_entries.sql
+│   ├── 003_create_audit_logs.sql
+│   └── 004_create_webhook_events.sql
+├── public/
+├── logs/
 ├── docs/
 │   ├── PRD.md
 │   ├── TRD.md
