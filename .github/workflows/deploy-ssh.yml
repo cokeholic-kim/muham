@@ -1,4 +1,4 @@
-name: Deploy to SSH Server
+name: SSH 서버 배포
 
 on:
   push:
@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Upload source to remote html directory
+    name: 원격 html 디렉터리에 소스 업로드
     runs-on: ubuntu-latest
 
     env:
@@ -23,10 +23,10 @@ jobs:
       SSH_TARGET_DIR: ${{ secrets.SSH_TARGET_DIR }}
 
     steps:
-      - name: Checkout
+      - name: 소스코드 체크아웃
         uses: actions/checkout@v4
 
-      - name: Validate deployment secrets
+      - name: 배포 Secret 확인
         run: |
           test -n "$SSH_HOST"
           test -n "$SSH_USER"
@@ -34,12 +34,12 @@ jobs:
           test -n "$SSH_PORT"
           test -n "$SSH_TARGET_DIR"
 
-      - name: Install SSH deployment tools
+      - name: SSH 배포 도구 설치
         run: |
           sudo apt-get update
-          sudo apt-get install -y sshpass rsync
+          sudo apt-get install -y sshpass
 
-      - name: Ensure remote target directory exists
+      - name: 원격 배포 디렉터리 생성
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
@@ -50,12 +50,27 @@ jobs:
             "$SSH_USER@$SSH_HOST" \
             "mkdir -p '$SSH_TARGET_DIR'"
 
-      - name: Upload files
+      - name: 원격 배포 명령어 확인
         env:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
-          sshpass -e rsync -az --delete \
-            -e "ssh -p $SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+          sshpass -e ssh \
+            -p "$SSH_PORT" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$SSH_HOST" \
+            "set -eu
+            for cmd in sh tar mkdir rm; do
+              command -v \"\$cmd\" >/dev/null || {
+                echo \"Missing remote command: \$cmd\" >&2
+                exit 1
+              }
+            done
+            test -w '$SSH_TARGET_DIR'"
+
+      - name: 배포 아카이브 생성
+        run: |
+          tar -czf "$RUNNER_TEMP/deploy.tar.gz" \
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude ".env" \
@@ -69,4 +84,47 @@ jobs:
             --exclude ".dockerignore" \
             --exclude "logs/" \
             --exclude "vendor/" \
-            ./ "$SSH_USER@$SSH_HOST:$SSH_TARGET_DIR/"
+            .
+
+      - name: 파일 업로드 및 압축 해제
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          REMOTE_ARCHIVE="$SSH_TARGET_DIR/.muham-deploy-${GITHUB_RUN_ID}.tar.gz"
+
+          sshpass -e scp \
+            -P "$SSH_PORT" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "$RUNNER_TEMP/deploy.tar.gz" \
+            "$SSH_USER@$SSH_HOST:$REMOTE_ARCHIVE"
+
+          sshpass -e ssh \
+            -p "$SSH_PORT" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$SSH_HOST" \
+            sh -s -- "$SSH_TARGET_DIR" "$REMOTE_ARCHIVE" <<'REMOTE'
+          set -eu
+
+          target_dir="$1"
+          archive_path="$2"
+          archive_name="${archive_path##*/}"
+
+          mkdir -p "$target_dir"
+          for path in "$target_dir"/* "$target_dir"/.[!.]* "$target_dir"/..?*; do
+            [ -e "$path" ] || continue
+
+            name="${path##*/}"
+            case "$name" in
+              .env|logs|vendor|"$archive_name")
+                continue
+                ;;
+            esac
+
+            rm -rf "$path"
+          done
+
+          tar -xzf "$archive_path" -C "$target_dir"
+          rm -f "$archive_path"
+          REMOTE
