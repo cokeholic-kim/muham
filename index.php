@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/app/Config/Env.php';
+require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
 
 use App\Config\Env;

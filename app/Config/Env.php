@@ -54,4 +54,15 @@ final class Env
         $value = getenv($key);
         return $value === false ? $default : $value;
     }
+
+    public static function required(string $key): string
+    {
+        $value = getenv($key);
+
+        if ($value === false || $value === '') {
+            throw new \RuntimeException(sprintf('Required environment variable is missing: %s', $key));
+        }
+
+        return $value;
+    }
 }

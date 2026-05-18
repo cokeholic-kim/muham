@@ -161,6 +161,15 @@ TELEGRAM_DEFAULT_CHAT_ID=
 - 기본 fetch mode는 associative array로 설정합니다.
 - 트랜잭션이 필요한 작업은 근무 기록 변경과 감사 로그 기록을 하나의 트랜잭션으로 처리합니다.
 
+현재 구현:
+
+- `App\Database\Database::connection()`에서 `.env` 기반 PDO 연결을 생성합니다.
+- DB 접속 환경변수는 코드 기본값으로 대체하지 않고 필수값으로 검증합니다.
+- `App\Database\Database::statement()`로 prepared statement를 실행합니다.
+- `App\Database\Database::fetchOne()`, `fetchAll()`로 조회 쿼리 실행을 공통화합니다.
+- `App\Database\Database::transaction()`으로 콜백 기반 트랜잭션을 실행합니다.
+- 개발용 health check는 `App\Database\HealthCheck`에서 공통 DB 계층을 사용합니다.
+
 ## 8. 인증 구현
 
 - 로그인 상태는 PHP session으로 관리합니다.
