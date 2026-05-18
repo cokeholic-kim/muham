@@ -1,0 +1,71 @@
+name: Deploy to SSH Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ssh-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Upload source to remote html directory
+    runs-on: ubuntu-latest
+
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
+      SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+      SSH_TARGET_DIR: ${{ secrets.SSH_TARGET_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        run: |
+          test -n "$SSH_HOST"
+          test -n "$SSH_USER"
+          test -n "$SSH_PASSWORD"
+          test -n "$SSH_TARGET_DIR"
+
+      - name: Install SSH deployment tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass rsync
+
+      - name: Ensure remote target directory exists
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh \
+            -p "$SSH_PORT" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$SSH_HOST" \
+            "mkdir -p '$SSH_TARGET_DIR'"
+
+      - name: Upload files
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -e rsync -az --delete \
+            -e "ssh -p $SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --exclude ".env" \
+            --exclude ".ftp-deploy-sync-state.json" \
+            --exclude ".agents/" \
+            --exclude ".codex/" \
+            --exclude "docs/" \
+            --exclude "docker/" \
+            --exclude "docker-compose.yml" \
+            --exclude "Dockerfile" \
+            --exclude ".dockerignore" \
+            --exclude "logs/" \
+            --exclude "vendor/" \
+            ./ "$SSH_USER@$SSH_HOST:$SSH_TARGET_DIR/"

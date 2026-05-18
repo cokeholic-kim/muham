@@ -66,11 +66,13 @@ docker compose down -v
 ├── docker/
 │   └── apache/
 │       └── 000-default.conf
+├── .htaccess
 ├── docs/
 │   ├── PRD.md
 │   ├── TRD.md
 │   ├── IMPLEMENTATION_PLAN.md
-│   └── DOCKER_GUIDE.md
+│   ├── DOCKER_GUIDE.md
+│   └── DEPLOY_GUIDE.md
 ├── .env.example
 ├── index.php
 ├── index.html

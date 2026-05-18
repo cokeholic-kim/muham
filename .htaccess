@@ -1,0 +1,23 @@
+Options -Indexes
+
+<IfModule mod_authz_core.c>
+    <FilesMatch "^\.">
+        Require all denied
+    </FilesMatch>
+
+    <FilesMatch "^(composer\.(json|lock)|package(-lock)?\.json|docker-compose\.ya?ml|Dockerfile|README\.md)$">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    <FilesMatch "^\.">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+
+    <FilesMatch "^(composer\.(json|lock)|package(-lock)?\.json|docker-compose\.ya?ml|Dockerfile|README\.md)$">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+</IfModule>

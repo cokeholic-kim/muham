@@ -10,6 +10,7 @@
 - [TRD: 기술 구현 문서](docs/TRD.md)
 - [Implementation Plan: 구현 계획](docs/IMPLEMENTATION_PLAN.md)
 - [Docker Guide: 로컬 실행 환경](docs/DOCKER_GUIDE.md)
+- [Deploy Guide: GitHub Actions 배포](docs/DEPLOY_GUIDE.md)
 
 ## 기술 스택
 
