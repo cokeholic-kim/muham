@@ -93,7 +93,7 @@ SSH 접속과 원격 명령어를 확인합니다.
 ```bash
 ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" '
   set -eu
-  for cmd in sh tar mkdir rm; do
+  for cmd in tar mkdir rm; do
     command -v "$cmd" >/dev/null || {
       echo "Missing remote command: $cmd" >&2
       exit 1
@@ -119,7 +119,7 @@ rm -f /tmp/muham-deploy-test.txt
 - 원격 `html` 폴더 안에 `.env`를 둘 경우 `.htaccess`로 외부 접근을 반드시 차단해야 합니다.
 - 배포 시 원격 `html` 폴더 안의 기존 파일은 정리될 수 있습니다.
 - 단, 서버에서 직접 관리하는 `.env`, `logs/`, `vendor/`는 삭제하지 않습니다.
-- 원격 서버에는 `sh`, `tar`, `mkdir`, `rm`이 필요합니다. `rsync`, `bash`, `find`는 필요하지 않습니다.
+- 원격 서버에는 `tar`, `mkdir`, `rm`이 필요합니다. `rsync`, `bash`, `sh`, `find`는 필요하지 않습니다.
 - SSH key 방식이 가능해지면 password 방식보다 SSH key 방식으로 전환하는 것을 권장합니다.
 
 ## `.env` 접근 차단 확인

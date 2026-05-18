@@ -60,7 +60,7 @@ jobs:
             -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$SSH_HOST" \
             "set -eu
-            for cmd in sh tar mkdir rm; do
+            for cmd in tar mkdir rm; do
               command -v \"\$cmd\" >/dev/null || {
                 echo \"Missing remote command: \$cmd\" >&2
                 exit 1
@@ -104,11 +104,9 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$SSH_HOST" \
-            sh -s -- "$SSH_TARGET_DIR" "$REMOTE_ARCHIVE" <<'REMOTE'
+            "target_dir='$SSH_TARGET_DIR'; archive_path='$REMOTE_ARCHIVE';"'
           set -eu
 
-          target_dir="$1"
-          archive_path="$2"
           archive_name="${archive_path##*/}"
 
           mkdir -p "$target_dir"
@@ -127,4 +125,4 @@ jobs:
 
           tar -xzf "$archive_path" -C "$target_dir"
           rm -f "$archive_path"
-          REMOTE
+          '
