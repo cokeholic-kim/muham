@@ -1,0 +1,6 @@
+AGENTS.md
+.env
+.ftp-deploy-sync-state.json
+vendor/
+logs/*.log
+docker/mysql/

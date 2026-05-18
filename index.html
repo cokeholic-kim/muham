@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 근무 시간 로그 컨버터</title>
+    <!-- Chart.js CDN 추가 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+    <header>
+        <div class="header-top">
+            <h1>
+                🕒 AI 근무 시간 파서
+                <span class="badge-ai">Multi-Model</span>
+            </h1>
+            <button id="convert-btn" class="btn">
+                <span>AI 변환 실행</span>
+            </button>
+        </div>
+        <div class="header-config">
+            <div class="api-input-group">
+                <label for="provider">Provider:</label>
+                <select id="provider" style="padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem; background: white;">
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                </select>
+                <button id="refresh-models-btn" class="btn-outline" style="padding: 0.35rem 0.55rem; font-size: 0.78rem; white-space: nowrap;">모델 불러오기</button>
+            </div>
+            <div class="api-input-group">
+                <label for="api-key" id="api-key-label">API Key:</label>
+                <input type="password" id="api-key" placeholder="API 키를 입력하세요" autocomplete="off">
+            </div>
+            <details class="advanced-settings">
+                <summary>고급 설정 (모델 선택)</summary>
+                <div class="api-input-group">
+                    <label for="model-input">Model:</label>
+                    <select id="model-input"></select>
+                </div>
+            </details>
+            <div class="api-input-group">
+                <label for="storage-mode">키 저장:</label>
+                <select id="storage-mode" style="padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem; background: white;">
+                    <option value="local">브라우저 저장(localStorage)</option>
+                    <option value="session">현재 탭만(sessionStorage)</option>
+                    <option value="none">저장 안 함</option>
+                </select>
+            </div>
+            <div class="header-help" id="model-source-help">
+                * 모델 목록은 기본 내장값입니다. API Key 입력 후 "모델 불러오기"로 사용 가능한 모델을 동기화할 수 있습니다.
+            </div>
+            <div class="header-help">
+                * 선택한 저장 모드에 따라 API 키/모델을 보관합니다.
+            </div>
+
+        </div>
+    </header>
+
+    <main>
+        <!-- 입력 패널 -->
+        <section class="panel">
+            <div class="panel-header">
+                <span>입력 (Raw Text)</span>
+                <div class="panel-header-actions" style="display:flex; gap:0.4rem; align-items:center;">
+                    <select id="preset-select" style="padding: 0.25rem 0.4rem; border:1px solid #cbd5e1; border-radius: 4px; font-size:0.8rem;">
+                        <option value="">예시 선택</option>
+                        <option value="single">단일 세션</option>
+                        <option value="multi">다중 세션</option>
+                        <option value="memo">메모 포함</option>
+                    </select>
+                    <button id="apply-preset-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">예시삽입</button>
+                    <button id="clear-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">지우기</button>
+                </div>
+            </div>
+            <div class="panel-body">
+                <textarea id="input-text" placeholder="근무 기록을 자유롭게 입력하세요. (AI가 형식을 파악합니다)&#13;&#10;&#13;&#10;[예시]&#13;&#10;10,22 11:30 ~ 12:40 점심시간 제외하고 근무&#13;&#10;10월 22일 오후 2시부터 6시까지 회의&#13;&#10;10/23 09:00 - 12:00 오전 근무, 13:00 - 18:00 오후 근무"></textarea>
+            </div>
+        </section>
+
+        <!-- 출력 패널 -->
+        <section class="panel">
+            <div class="panel-header">
+                <div class="tabs">
+                    <div class="tab active" data-view="json">JSON</div>
+                    <div class="tab" data-view="table">테이블</div>
+                    <div class="tab" data-view="chart">📈 차트</div>
+                </div>
+                <div class="panel-header-actions" style="display:flex; gap:0.35rem;">
+                    <button id="download-json-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">JSON 다운로드</button>
+                    <button id="download-csv-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">CSV 다운로드</button>
+                    <button id="copy-btn" class="btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">복사</button>
+                </div>
+            </div>
+            <div class="panel-body" id="output-container">
+                <div style="padding: 2rem; text-align: center; color: #94a3b8;">
+                    API 키를 입력하고 'AI 변환 실행'을 눌러주세요.
+                </div>
+            </div>
+            
+            <!-- 로딩 오버레이 -->
+            <div id="loading-overlay" class="overlay hidden">
+                <div class="spinner"></div>
+                <div style="font-weight: 600; color: var(--text);">AI가 분석 중입니다...</div>
+            </div>
+        </section>
+    </main>
+
+        <script src="./app.js"></script>
+</body>
+</html>
+

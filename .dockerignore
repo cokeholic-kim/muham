@@ -1,0 +1,6 @@
+.git
+.env
+vendor
+logs
+node_modules
+.ftp-deploy-sync-state.json

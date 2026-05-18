@@ -1,0 +1,315 @@
+# TRD: 근무시간 관리 시스템 기술 구현 문서
+
+## 1. 기술 스택
+
+- Language: PHP 8.4
+- Database: MySQL 8.0
+- DB 연결 및 쿼리: PDO
+- 환경 설정: `.env`
+- 프로젝트 시작점: `index.php`
+- 로컬 실행: Docker Compose
+- UI: Bootstrap 5 계열
+
+## 2. 기술 결정사항
+
+| 항목 | 결정 |
+| --- | --- |
+| 인증 방식 | PHP session 기반 로그인 |
+| 세션 쿠키 | HTTP-only cookie 사용 |
+| 권한 | `user`, `admin` 두 역할로 시작 |
+| 근무 기록 수정 | 원본 보존, `version` 증가, 감사 로그 기록 |
+| 근무 기록 삭제 | 물리 삭제 금지, soft delete 처리 |
+| 웹훅 보안 | IP allowlist, shared secret, `requestId` 중복 방지 |
+| 텔레그램 대상 | 사용자별 `telegram_chat_id` 우선, 없으면 기본 chat id 사용 |
+| 시간대 | `Asia/Seoul` 기준 |
+| DB 마이그레이션 | `migrations/*.sql` 파일로 관리 |
+| DB 접근 | PDO prepared statement만 사용 |
+
+## 3. 로컬 실행 환경
+
+Docker Compose로 PHP 8.4와 MySQL 8.0을 함께 실행합니다.
+
+```bash
+docker compose up -d --build
+```
+
+접속:
+
+```text
+http://localhost:8000
+```
+
+기존 AI 근무시간 파서:
+
+```text
+http://localhost:8000/index.html
+```
+
+중지:
+
+```bash
+docker compose down
+```
+
+MySQL 데이터까지 초기화:
+
+```bash
+docker compose down -v
+```
+
+## 4. 현재 파일 구조
+
+```text
+.
+├── Dockerfile
+├── docker-compose.yml
+├── docker/
+│   └── apache/
+│       └── 000-default.conf
+├── docs/
+│   ├── PRD.md
+│   ├── TRD.md
+│   ├── IMPLEMENTATION_PLAN.md
+│   └── DOCKER_GUIDE.md
+├── .env.example
+├── index.php
+├── index.html
+├── app.js
+├── styles.css
+└── README.md
+```
+
+## 5. 목표 애플리케이션 구조
+
+```text
+.
+├── index.php
+├── app/
+│   ├── Config/
+│   ├── Controllers/
+│   ├── Database/
+│   ├── Middleware/
+│   ├── Models/
+│   └── Services/
+├── public/
+│   ├── app.js
+│   └── styles.css
+├── migrations/
+├── logs/
+├── docs/
+├── .env.example
+└── README.md
+```
+
+`index.php`는 front controller로 동작합니다. 모든 요청은 `index.php`에서 라우팅하고, 각 기능은 인증, 근무시간, 웹훅, 감사 로그 모듈로 분리합니다.
+
+## 6. 환경변수
+
+```env
+APP_ENV=local
+APP_DEBUG=true
+APP_URL=http://localhost:8000
+APP_PORT=8000
+APP_TIMEZONE=Asia/Seoul
+
+DB_HOST=mysql
+DB_PORT=3306
+DB_DATABASE=muham_worktime
+DB_USERNAME=muham
+DB_PASSWORD=muham_password
+DB_CHARSET=utf8mb4
+
+MYSQL_PORT=3307
+MYSQL_ROOT_PASSWORD=root_password
+
+SESSION_SECRET=change-this-local-secret
+WEBHOOK_SHARED_SECRET=change-this-webhook-secret
+WEBHOOK_ALLOWED_IPS=127.0.0.1
+WEBHOOK_ACTIVE_FROM=2026-01-01
+WEBHOOK_ACTIVE_TO=2026-12-31
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_DEFAULT_CHAT_ID=
+```
+
+원칙:
+
+- DB 접속 정보, 텔레그램 토큰, 웹훅 secret 등 민감 정보는 소스코드에 직접 작성하지 않습니다.
+- `.env`는 git에 커밋하지 않고, 배포 환경별로 별도 관리합니다.
+- `.env.example`에는 로컬 개발용 예시 값만 둡니다.
+
+## 7. DB 접근 원칙
+
+- 모든 DB 연결은 PDO로만 처리합니다.
+- 모든 쿼리는 prepared statement를 사용합니다.
+- PDO는 예외 모드(`PDO::ERRMODE_EXCEPTION`)로 설정합니다.
+- 기본 fetch mode는 associative array로 설정합니다.
+- 트랜잭션이 필요한 작업은 근무 기록 변경과 감사 로그 기록을 하나의 트랜잭션으로 처리합니다.
+
+## 8. 인증 구현
+
+- 로그인 상태는 PHP session으로 관리합니다.
+- 세션 쿠키는 HTTP-only로 설정합니다.
+- 운영 환경에서는 secure cookie를 사용하고 HTTPS를 강제합니다.
+- 로그인 성공, 실패, 로그아웃은 모두 `audit_logs`에 기록합니다.
+- 로그인 실패가 반복되면 계정 또는 IP 기준으로 요청을 제한합니다.
+
+권한:
+
+- `user`: 본인의 근무 기록 입력, 조회, 정정 요청 또는 수정 가능
+- `admin`: 전체 사용자 근무 기록 조회, 감사 로그 조회, 웹훅 처리 내역 조회 가능
+
+모든 조회와 변경 API는 현재 로그인 사용자와 대상 데이터의 권한을 검증해야 합니다.
+
+## 9. 데이터 모델
+
+### users
+
+| 필드 | 설명 |
+| --- | --- |
+| id | 사용자 고유 ID |
+| email | 로그인 이메일 |
+| password_hash | 비밀번호 해시 |
+| name | 사용자 이름 |
+| role | `user`, `admin` |
+| telegram_chat_id | 사용자별 텔레그램 수신처 |
+| created_at | 가입 시각 |
+| updated_at | 수정 시각 |
+
+### work_entries
+
+| 필드 | 설명 |
+| --- | --- |
+| id | 근무 기록 ID |
+| user_id | 사용자 ID |
+| work_date | 근무일 |
+| start_at | 시작 시각 |
+| end_at | 종료 시각 |
+| break_minutes | 휴게 시간 |
+| work_minutes | 실제 근무 시간 |
+| memo | 메모 |
+| status | `active`, `corrected`, `deleted` |
+| version | 변경 버전 |
+| created_by | 생성자 |
+| updated_by | 마지막 수정자 |
+| deleted_at | soft delete 시각 |
+| created_at | 생성 시각 |
+| updated_at | 수정 시각 |
+
+### audit_logs
+
+| 필드 | 설명 |
+| --- | --- |
+| id | 로그 ID |
+| actor_user_id | 행위자 ID |
+| target_user_id | 대상 사용자 ID |
+| action | `signup`, `login`, `create_work`, `update_work`, `delete_work`, `webhook_summary` 등 |
+| entity_type | 대상 데이터 종류 |
+| entity_id | 대상 데이터 ID |
+| before_json | 변경 전 값 |
+| after_json | 변경 후 값 |
+| request_ip | 요청 IP |
+| user_agent | user-agent |
+| request_id | 요청 추적 ID |
+| prev_hash | 이전 감사 로그 해시 |
+| hash | 현재 감사 로그 해시 |
+| created_at | 기록 시각 |
+
+### webhook_events
+
+| 필드 | 설명 |
+| --- | --- |
+| id | 웹훅 이벤트 ID |
+| request_id | 중복 방지용 요청 ID |
+| source_ip | 요청 IP |
+| allowed | 허용 여부 |
+| period_from | 정리 시작일 |
+| period_to | 정리 종료일 |
+| payload_json | 요청 본문 |
+| result | `success`, `rejected`, `failed` |
+| error_message | 실패 사유 |
+| created_at | 요청 시각 |
+
+## 10. API 설계
+
+### 인증
+
+- `POST /api/auth/signup` 회원가입
+- `POST /api/auth/login` 로그인
+- `POST /api/auth/logout` 로그아웃
+- `GET /api/me` 내 정보 조회
+
+### 근무시간
+
+- `POST /api/work-entries` 근무시간 등록
+- `GET /api/work-entries?from=YYYY-MM-DD&to=YYYY-MM-DD` 기간별 조회
+- `GET /api/work-entries/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` 기간별 합계 조회
+- `PATCH /api/work-entries/:id` 근무시간 수정
+- `DELETE /api/work-entries/:id` 근무시간 삭제 요청 또는 비활성화
+
+### 웹훅
+
+- `POST /api/webhooks/work-summary` 근무시간 요약 텔레그램 발송
+
+## 11. 웹훅 처리 흐름
+
+1. 요청 IP가 허용 목록에 있는지 확인합니다.
+2. 요청 시간이 허용 기간 안인지 확인합니다.
+3. shared secret을 검증합니다.
+4. `requestId`로 중복 요청 여부를 확인합니다.
+5. 대상 사용자의 지정 기간 근무 기록을 조회합니다.
+6. 총 근무시간, 휴게시간, 실제 근무시간, 변경 건수를 계산합니다.
+7. 텔레그램 Bot API로 메시지를 전송합니다.
+8. 성공 또는 실패 결과를 `webhook_events`와 `audit_logs`에 기록합니다.
+
+## 12. 시간대 정책
+
+- 초기 구현은 PHP, MySQL, 화면 표시 모두 `Asia/Seoul` 기준으로 통일합니다.
+- `.env`의 `APP_TIMEZONE=Asia/Seoul`을 기준값으로 사용합니다.
+- 모든 날짜 필터는 `YYYY-MM-DD` 형식을 사용합니다.
+- `created_at`, `updated_at`, 감사 로그 시각은 서버 기준 현재 시각으로 저장합니다.
+
+## 13. 마이그레이션 정책
+
+- DB 스키마는 `migrations/*.sql` 파일로 관리합니다.
+- 파일명은 실행 순서가 보장되도록 숫자 prefix를 사용합니다.
+- 예: `001_create_users.sql`, `002_create_work_entries.sql`
+- 운영 DB에 적용한 마이그레이션은 수정하지 않고 새 파일로 변경합니다.
+- 추후 필요하면 `schema_migrations` 테이블을 추가해 적용 여부를 관리합니다.
+
+## 14. 보안 체크리스트
+
+- [ ] 비밀번호 원문 저장 금지
+- [ ] 사용자별 데이터 접근 권한 검증
+- [ ] 관리자 권한 분리
+- [ ] 근무 기록 변경 이력 저장
+- [ ] 감사 로그 append-only 정책 적용
+- [ ] 웹훅 IP 제한
+- [ ] 웹훅 shared secret 검증
+- [ ] 웹훅 중복 요청 방지
+- [ ] 텔레그램 토큰 환경변수 관리
+- [ ] 운영 환경 HTTPS 적용
+- [ ] 데이터베이스 정기 백업
+
+## 15. Bootstrap 적용 예시
+
+서버 렌더링 PHP 화면에서는 HTML에 Bootstrap class를 직접 적용합니다.
+
+```html
+<form class="row g-3">
+  <div class="col-md-4">
+    <label for="work-date" class="form-label">근무일</label>
+    <input type="date" id="work-date" name="work_date" class="form-control" required>
+  </div>
+  <div class="col-md-4">
+    <label for="start-at" class="form-label">시작 시간</label>
+    <input type="time" id="start-at" name="start_at" class="form-control" required>
+  </div>
+  <div class="col-md-4">
+    <label for="end-at" class="form-label">종료 시간</label>
+    <input type="time" id="end-at" name="end_at" class="form-control" required>
+  </div>
+  <div class="col-12">
+    <button type="submit" class="btn btn-primary">저장</button>
+  </div>
+</form>
+```

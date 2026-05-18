@@ -1,0 +1,435 @@
+# Implementation Plan: 근무시간 관리 시스템
+
+이 문서는 [PRD.md](PRD.md)와 [TRD.md](TRD.md)를 기준으로 구현 작업을 추적합니다.
+
+Docker 설정과 로컬 실행 방법은 [DOCKER_GUIDE.md](DOCKER_GUIDE.md)에서 관리합니다.
+
+작업을 완료할 때마다 각 태스크의 체크박스를 갱신하고, `작업 결과`, `검증 결과`, `메모`를 채웁니다.
+
+## 상태 규칙
+
+- `[ ]`: 시작 전
+- `[~]`: 진행 중
+- `[x]`: 완료
+
+## 전체 진행률
+
+- [ ] Task 1. 애플리케이션 기본 구조와 front controller 정리
+- [ ] Task 2. MySQL 마이그레이션 SQL 작성
+- [ ] Task 3. PDO 데이터베이스 계층과 트랜잭션 유틸 구현
+- [ ] Task 4. 세션 인증과 user/admin 권한 구현
+- [ ] Task 5. 감사 로그 서비스와 변경 무결성 기록 구현
+- [ ] Task 6. 근무 기록 CRUD와 기간별 조회/요약 API 구현
+- [ ] Task 7. Bootstrap 기반 서버 렌더링 UI와 기존 AI 파서 정리
+- [ ] Task 8. 웹훅 보안 검증과 텔레그램 발송 구현
+- [ ] Task 9. 보안 hardening과 통합 검증
+
+## Task 1. 애플리케이션 기본 구조와 front controller 정리
+
+상태: [ ]
+
+### 목표
+
+TRD의 목표 구조에 맞춰 PHP 애플리케이션 디렉터리와 공통 부트스트랩 흐름을 만든다. `index.php`는 환경 점검 화면에서 front controller 역할로 전환할 준비를 하고, 기존 `.env` 로딩과 PDO 점검 코드는 `app/Config` 및 `app/Database`로 이동 가능한 구조로 정리한다.
+
+### 작업 범위
+
+- `app/Config`, `app/Database`, `app/Controllers`, `app/Middleware`, `app/Models`, `app/Services` 생성
+- `migrations`, `public`, `logs` 생성
+- `index.php`에 최소 라우팅 분기 구조 추가
+- 기존 `/index.html` AI 파서 접근 유지
+- 개발용 health/check 화면 또는 경로 유지
+
+### 관련 파일
+
+- `index.php`
+- `app/Config/`
+- `app/Database/`
+- `docs/TRD.md`
+
+### 완료 기준
+
+- `docker compose` 환경에서 `http://localhost:8000` 접속이 유지된다.
+- 새 애플리케이션 디렉터리 구조가 생성된다.
+- `index.php`가 요청 경로별 분기 구조를 가진다.
+- 기존 `http://localhost:8000/index.html` 접근이 깨지지 않는다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 2. MySQL 마이그레이션 SQL 작성
+
+상태: [ ]
+
+### 목표
+
+TRD 데이터 모델에 따라 `users`, `work_entries`, `audit_logs`, `webhook_events` 테이블을 생성하는 `migrations/*.sql` 파일을 작성한다.
+
+### 작업 범위
+
+- `migrations/001_create_users.sql`
+- `migrations/002_create_work_entries.sql`
+- `migrations/003_create_audit_logs.sql`
+- `migrations/004_create_webhook_events.sql`
+- `user_id`, `work_date`, `status`, `created_at`, `request_id` 등 조회 기준 인덱스 추가
+- `webhook_events.request_id` unique 제약 추가
+- MySQL 8.0, InnoDB, utf8mb4 기준 작성
+
+### 관련 파일
+
+- `migrations/001_create_users.sql`
+- `migrations/002_create_work_entries.sql`
+- `migrations/003_create_audit_logs.sql`
+- `migrations/004_create_webhook_events.sql`
+- `docs/TRD.md`
+
+### 완료 기준
+
+- MySQL 8.0 컨테이너에서 모든 SQL 파일이 순서대로 실행된다.
+- 네 개의 핵심 테이블이 생성된다.
+- `users.role`, `users.telegram_chat_id`, `work_entries.version`, `work_entries.deleted_at`, `audit_logs.prev_hash`, `audit_logs.hash`, `webhook_events.request_id`가 확인된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 3. PDO 데이터베이스 계층과 트랜잭션 유틸 구현
+
+상태: [ ]
+
+### 목표
+
+`.env` 기반 DB 접속 정보를 사용해 PDO 연결 클래스를 구현하고, prepared statement 사용을 강제하는 기본 query 유틸과 트랜잭션 실행 유틸을 만든다.
+
+### 작업 범위
+
+- PDO connection provider 구현
+- `PDO::ERRMODE_EXCEPTION` 설정
+- `PDO::FETCH_ASSOC` 설정
+- `PDO::ATTR_EMULATE_PREPARES = false` 설정
+- prepared statement 실행용 메서드 정의
+- transaction callback 유틸 정의
+- 개발용 DB health check 경로에서 연결 확인
+
+### 관련 파일
+
+- `app/Database/`
+- `app/Config/`
+- `index.php`
+- `.env.example`
+
+### 완료 기준
+
+- 컨테이너 내부 PHP에서 `pdo_mysql` 확장이 로드된다.
+- 앱의 DB health 경로가 MySQL 버전과 현재 DB명을 반환한다.
+- 테스트 쿼리는 prepared statement 경로로만 실행된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 4. 세션 인증과 user/admin 권한 구현
+
+상태: [ ]
+
+### 목표
+
+PHP session 기반 회원가입, 로그인, 로그아웃, 내 정보 조회를 구현한다. 비밀번호는 `password_hash`, `password_verify` 기반으로 처리하고, 세션 쿠키는 HTTP-only로 설정한다.
+
+### 작업 범위
+
+- `AuthController` 구현
+- `AuthService` 구현
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/me`
+- 로그인 사용자 확인 미들웨어
+- `user`, `admin` 권한 체크 유틸 또는 미들웨어
+
+### 관련 파일
+
+- `app/Controllers/`
+- `app/Services/`
+- `app/Middleware/`
+- `index.php`
+- `migrations/001_create_users.sql`
+
+### 완료 기준
+
+- 회원가입 후 로그인할 수 있다.
+- 세션 기반으로 `GET /api/me`가 현재 사용자를 반환한다.
+- 잘못된 비밀번호 로그인은 실패한다.
+- `user`, `admin` 권한 구분이 가능하다.
+- 세션 쿠키에 HTTP-only 속성이 적용된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 5. 감사 로그 서비스와 변경 무결성 기록 구현
+
+상태: [ ]
+
+### 목표
+
+로그인, 근무 기록 생성/수정/삭제, 웹훅 처리 등 주요 이벤트를 `audit_logs`에 기록하는 서비스를 구현한다.
+
+### 작업 범위
+
+- `AuditLogService` 구현
+- `before_json`, `after_json` 저장
+- `request_ip`, `user_agent`, `request_id` 저장
+- 마지막 `audit_logs.hash` 조회 후 `prev_hash`로 연결
+- 현재 로그 `hash` 생성
+- 근무 기록 변경과 감사 로그 기록을 같은 트랜잭션에서 처리할 수 있는 인터페이스 구성
+
+### 관련 파일
+
+- `app/Services/`
+- `app/Database/`
+- `migrations/003_create_audit_logs.sql`
+
+### 완료 기준
+
+- 로그인 성공/실패 또는 테스트 이벤트가 `audit_logs`에 기록된다.
+- 연속 로그의 `prev_hash`가 이전 `hash`와 연결된다.
+- `before_json`, `after_json`, `request_ip`, `user_agent`가 저장된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 6. 근무 기록 CRUD와 기간별 조회/요약 API 구현
+
+상태: [ ]
+
+### 목표
+
+사용자별 근무시간 등록, 기간 조회, 합계 조회, 수정, soft delete API를 구현한다.
+
+### 작업 범위
+
+- `WorkEntryController` 구현
+- `WorkEntryService` 구현
+- `POST /api/work-entries`
+- `GET /api/work-entries?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `GET /api/work-entries/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `PATCH /api/work-entries/:id`
+- `DELETE /api/work-entries/:id`
+- 종료 시간 검증
+- 동일 사용자 동일 시간대 중복 방지
+- 휴게시간과 실제 근무시간 계산
+- 수정 시 `version` 증가
+- 변경 시 감사 로그 기록
+- 본인/관리자 권한 검증
+
+### 관련 파일
+
+- `app/Controllers/`
+- `app/Services/`
+- `migrations/002_create_work_entries.sql`
+- `docs/PRD.md`
+
+### 완료 기준
+
+- 로그인 사용자가 본인 근무 기록을 생성, 조회, 수정, soft delete할 수 있다.
+- 타인 기록 접근은 거부된다.
+- 기간별 summary가 총 근무시간, 총 휴게시간, 실제 근무시간을 반환한다.
+- 수정/삭제 시 `audit_logs`가 생성된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 7. Bootstrap 기반 서버 렌더링 UI와 기존 AI 파서 정리
+
+상태: [ ]
+
+### 목표
+
+Bootstrap 5 계열을 적용해 로그인, 회원가입, 근무시간 입력, 기간 조회, 근무 기록 테이블, 상태 알림 화면을 구성한다.
+
+### 작업 범위
+
+- 공통 layout, header, navigation 구성
+- 로그인 폼
+- 회원가입 폼
+- 근무시간 입력 폼
+- 기간 필터
+- 근무 기록 테이블
+- alert, badge, table, form Bootstrap class 적용
+- 모바일 폭에서 폼과 필터가 겹치지 않도록 정리
+- 기존 `/index.html` AI 파서 접근 유지
+
+### 관련 파일
+
+- `index.php`
+- `public/`
+- `index.html`
+- `styles.css`
+- `docs/PRD.md`
+
+### 완료 기준
+
+- 브라우저에서 로그인, 회원가입, 근무시간 입력, 조회 화면을 사용할 수 있다.
+- 모바일 폭에서 입력 폼과 기간 필터가 겹치지 않는다.
+- 기존 `/index.html` AI 파서 접근이 유지된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 8. 웹훅 보안 검증과 텔레그램 발송 구현
+
+상태: [ ]
+
+### 목표
+
+`POST /api/webhooks/work-summary`를 구현한다. IP allowlist, 유효 기간, shared secret, `requestId` 중복 방지, 텔레그램 발송, 로그 기록을 포함한다.
+
+### 작업 범위
+
+- `WebhookController` 구현
+- `WebhookService` 구현
+- `TelegramService` 구현
+- source IP 추출
+- `WEBHOOK_ALLOWED_IPS` 검증
+- `WEBHOOK_ACTIVE_FROM`, `WEBHOOK_ACTIVE_TO` 검증
+- shared secret 검증
+- `requestId` 중복 검증
+- 기간별 근무 요약 계산
+- 사용자별 `telegram_chat_id` 우선 사용
+- 없으면 `TELEGRAM_DEFAULT_CHAT_ID` 사용
+- 성공, 실패, 거부 결과를 `webhook_events`와 `audit_logs`에 기록
+
+### 관련 파일
+
+- `app/Controllers/`
+- `app/Services/`
+- `migrations/004_create_webhook_events.sql`
+- `.env.example`
+
+### 완료 기준
+
+- 허용되지 않은 IP 요청이 거부되고 로그에 남는다.
+- 잘못된 secret 요청이 거부되고 로그에 남는다.
+- 유효 기간 밖 요청이 거부되고 로그에 남는다.
+- 중복 `requestId` 요청이 거부되고 로그에 남는다.
+- 정상 요청은 근무기간 요약을 생성한다.
+- 텔레그램 발송 성공 또는 실패 결과가 `webhook_events`와 `audit_logs`에 기록된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
+
+## Task 9. 보안 hardening과 통합 검증
+
+상태: [ ]
+
+### 목표
+
+PRD 성공 기준과 TRD 보안 체크리스트를 기준으로 전체 흐름을 검증한다.
+
+### 작업 범위
+
+- 회원가입부터 근무 기록 등록, 조회, 수정, delete까지 end-to-end 검증
+- 관리자 조회와 일반 사용자 접근 제한 검증
+- 감사 로그 생성 여부 검증
+- 웹훅 성공, 실패, 거부 시나리오 검증
+- `docker compose up -d --build` 실행 절차 재검증
+- HTTPS, secure cookie 운영 설정 정리
+- CSRF 보호 방안 정리
+- rate limit 방안 정리
+- 데이터베이스 백업 정책 문서화
+- `docs/PRD.md`, `docs/TRD.md`의 완료/제약 사항 업데이트
+
+### 관련 파일
+
+- `docs/PRD.md`
+- `docs/TRD.md`
+- `README.md`
+- 전체 애플리케이션 파일
+
+### 완료 기준
+
+- PRD 성공 기준 6개가 검증되거나 미완료 사유가 문서화된다.
+- `docker compose up -d --build` 후 핵심 화면과 API가 동작한다.
+- 보안 체크리스트의 완료/미완료 상태가 TRD에 반영된다.
+
+### 작업 결과
+
+-
+
+### 검증 결과
+
+-
+
+### 메모
+
+-
