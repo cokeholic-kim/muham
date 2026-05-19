@@ -119,6 +119,18 @@ docker compose down -v
 
 `index.php`는 front controller로 동작합니다. 모든 요청은 `index.php`에서 라우팅하고, 각 기능은 인증, 근무시간, 웹훅, 감사 로그 모듈로 분리합니다.
 
+현재 서버 렌더링 화면:
+
+- `/`: 로그인 상태에 따라 `/login` 또는 `/work-entries`로 이동
+- `/login`: 로그인 화면
+- `/signup`: 회원가입 화면
+- `/logout`: 로그아웃 POST
+- `/work-entries`: 근무시간 입력, 기간 조회, 요약, 목록 화면
+- `/work-entries/:id/edit`: 근무 기록 수정 화면
+- `/work-entries/:id/delete`: 근무 기록 soft delete POST
+- `/health`: 개발용 환경 점검 화면
+- `/index.html`: 기존 AI 근무시간 파서
+
 ## 6. 환경변수
 
 ```env

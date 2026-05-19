@@ -141,6 +141,20 @@ final class WorkEntryService
 
     /**
      * @param array<string, mixed> $actor
+     * @return array<string, mixed>|null
+     */
+    public function find(array $actor, int $id): ?array
+    {
+        return $this->findByIdForActor(
+            Database::connection(),
+            $id,
+            (int)$actor['id'],
+            (string)$actor['role']
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $actor
      * @param array<string, mixed> $query
      * @return array<string, mixed>
      */

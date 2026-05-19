@@ -11,8 +11,10 @@ require_once __DIR__ . '/app/Services/WorkEntryService.php';
 require_once __DIR__ . '/app/Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/app/Controllers/AuthController.php';
 require_once __DIR__ . '/app/Controllers/WorkEntryController.php';
+require_once __DIR__ . '/app/Controllers/WebController.php';
 
 use App\Controllers\AuthController;
+use App\Controllers\WebController;
 use App\Controllers\WorkEntryController;
 use App\Config\Env;
 use App\Database\HealthCheck;
@@ -176,6 +178,71 @@ if ($path === '/favicon.ico') {
     http_response_code(204);
     exit;
 }
+
+$authService = new AuthService();
+$auditLogService = new AuditLogService();
+$authMiddleware = new AuthMiddleware($authService);
+$requestContext = requestContext();
+$webController = new WebController(
+    new AuthController($authService, $authMiddleware, $auditLogService, $requestContext),
+    $authMiddleware,
+    new WorkEntryService($auditLogService, $requestContext)
+);
+
+if ($path === '/' && $method === 'GET') {
+    $webController->home();
+}
+
+if ($path === '/health' && $method === 'GET') {
+    $webController->health();
+}
+
+if ($path === '/login' && $method === 'GET') {
+    $webController->loginForm();
+}
+
+if ($path === '/login' && $method === 'POST') {
+    $webController->login($_POST);
+}
+
+if ($path === '/signup' && $method === 'GET') {
+    $webController->signupForm();
+}
+
+if ($path === '/signup' && $method === 'POST') {
+    $webController->signup($_POST);
+}
+
+if ($path === '/logout' && $method === 'POST') {
+    $webController->logout();
+}
+
+if ($path === '/work-entries' && $method === 'GET') {
+    $webController->workEntries($_GET);
+}
+
+if ($path === '/work-entries' && $method === 'POST') {
+    $webController->createWorkEntry($_POST);
+}
+
+if (preg_match('#^/work-entries/([1-9][0-9]*)/edit$#', $path, $matches) === 1) {
+    if ($method === 'GET') {
+        $webController->editWorkEntryForm((int)$matches[1]);
+    }
+
+    if ($method === 'POST') {
+        $webController->updateWorkEntry((int)$matches[1], $_POST);
+    }
+}
+
+if (preg_match('#^/work-entries/([1-9][0-9]*)/delete$#', $path, $matches) === 1 && $method === 'POST') {
+    $webController->deleteWorkEntry((int)$matches[1]);
+}
+
+http_response_code(404);
+header('Content-Type: text/plain; charset=utf-8');
+echo 'Not Found';
+exit;
 
 if ($path !== '/' && $path !== '/health') {
     http_response_code(404);
