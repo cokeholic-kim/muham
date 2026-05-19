@@ -5,6 +5,7 @@ require_once __DIR__ . '/app/Config/Env.php';
 require_once __DIR__ . '/app/Services/SessionService.php';
 require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
+require_once __DIR__ . '/app/Services/AuditLogService.php';
 require_once __DIR__ . '/app/Services/AuthService.php';
 require_once __DIR__ . '/app/Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/app/Controllers/AuthController.php';
@@ -13,6 +14,7 @@ use App\Controllers\AuthController;
 use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
+use App\Services\AuditLogService;
 use App\Services\AuthService;
 
 Env::load(__DIR__ . '/.env');
@@ -72,9 +74,33 @@ function authRuntimeStatus(\RuntimeException $e): int
     return 400;
 }
 
+/**
+ * @return array<string, string|null>
+ */
+function requestContext(): array
+{
+    $requestId = $_SERVER['HTTP_X_REQUEST_ID'] ?? '';
+    $requestId = is_string($requestId) ? trim($requestId) : '';
+
+    if ($requestId === '') {
+        $requestId = bin2hex(random_bytes(16));
+    }
+
+    return [
+        'request_ip' => (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+        'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? substr((string)$_SERVER['HTTP_USER_AGENT'], 0, 512) : null,
+        'request_id' => substr($requestId, 0, 120),
+    ];
+}
+
 if (str_starts_with($path, '/api/')) {
     $authService = new AuthService();
-    $authController = new AuthController($authService, new AuthMiddleware($authService));
+    $authController = new AuthController(
+        $authService,
+        new AuthMiddleware($authService),
+        new AuditLogService(),
+        requestContext()
+    );
 
     try {
         $result = match ([$method, $path]) {

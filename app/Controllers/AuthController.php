@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Middleware\AuthMiddleware;
+use App\Services\AuditLogService;
 use App\Services\AuthService;
 use App\Services\SessionService;
 use InvalidArgumentException;
@@ -13,7 +14,10 @@ final class AuthController
 {
     public function __construct(
         private readonly AuthService $authService,
-        private readonly AuthMiddleware $authMiddleware
+        private readonly AuthMiddleware $authMiddleware,
+        private readonly AuditLogService $auditLogService,
+        /** @var array<string, string|null> */
+        private readonly array $requestContext
     ) {
     }
 
@@ -30,6 +34,21 @@ final class AuthController
         );
 
         SessionService::login((int)$user['id'], (string)$user['role']);
+        $this->auditLogService->record(
+            (int)$user['id'],
+            (int)$user['id'],
+            'signup',
+            'user',
+            (int)$user['id'],
+            null,
+            [
+                'id' => $user['id'],
+                'email' => $user['email'],
+                'name' => $user['name'],
+                'role' => $user['role'],
+            ],
+            $this->requestContext
+        );
 
         return [
             'status' => 201,
@@ -46,12 +65,45 @@ final class AuthController
      */
     public function login(array $payload): array
     {
-        $user = $this->authService->login(
-            $this->stringValue($payload, 'email'),
-            $this->stringValue($payload, 'password')
-        );
+        $email = $this->stringValue($payload, 'email');
+
+        try {
+            $user = $this->authService->login($email, $this->stringValue($payload, 'password'));
+        } catch (RuntimeException $e) {
+            $this->auditLogService->record(
+                null,
+                null,
+                'login_failed',
+                'user',
+                null,
+                null,
+                [
+                    'email' => strtolower(trim($email)),
+                    'result' => 'failed',
+                    'reason' => $e->getMessage(),
+                ],
+                $this->requestContext
+            );
+
+            throw $e;
+        }
 
         SessionService::login((int)$user['id'], (string)$user['role']);
+        $this->auditLogService->record(
+            (int)$user['id'],
+            (int)$user['id'],
+            'login',
+            'user',
+            (int)$user['id'],
+            null,
+            [
+                'id' => $user['id'],
+                'email' => $user['email'],
+                'role' => $user['role'],
+                'result' => 'success',
+            ],
+            $this->requestContext
+        );
 
         return [
             'status' => 200,
@@ -67,6 +119,31 @@ final class AuthController
      */
     public function logout(): array
     {
+        $user = null;
+        $userId = SessionService::userId();
+
+        if ($userId !== null) {
+            $user = $this->authService->findById($userId);
+        }
+
+        if ($user !== null) {
+            $this->auditLogService->record(
+                (int)$user['id'],
+                (int)$user['id'],
+                'logout',
+                'user',
+                (int)$user['id'],
+                null,
+                [
+                    'id' => $user['id'],
+                    'email' => $user['email'],
+                    'role' => $user['role'],
+                    'result' => 'success',
+                ],
+                $this->requestContext
+            );
+        }
+
         SessionService::logout();
 
         return [

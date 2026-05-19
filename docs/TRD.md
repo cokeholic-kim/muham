@@ -249,6 +249,14 @@ TELEGRAM_DEFAULT_CHAT_ID=
 | hash | 현재 감사 로그 해시 |
 | created_at | 기록 시각 |
 
+현재 구현:
+
+- `App\Services\AuditLogService`에서 감사 로그 기록을 담당합니다.
+- `record()`는 단독 감사 로그를 기록하고, `recordInTransaction()`은 다른 데이터 변경과 같은 트랜잭션 안에서 감사 로그를 기록합니다.
+- 새 감사 로그는 직전 감사 로그의 `hash`를 `prev_hash`로 저장하고, 정규화한 로그 데이터로 SHA-256 `hash`를 생성합니다.
+- `signup`, `login`, `login_failed`, `logout` 이벤트는 인증 API에서 감사 로그로 기록합니다.
+- 요청의 `X-Request-Id`가 있으면 사용하고, 없으면 서버에서 요청 ID를 생성해 `request_id`에 저장합니다.
+
 ### webhook_events
 
 | 필드 | 설명 |
