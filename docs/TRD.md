@@ -289,6 +289,16 @@ TELEGRAM_DEFAULT_CHAT_ID=
 - `PATCH /api/work-entries/:id` 근무시간 수정
 - `DELETE /api/work-entries/:id` 근무시간 삭제 요청 또는 비활성화
 
+현재 구현:
+
+- `App\Services\WorkEntryService`에서 근무 기록 생성, 조회, 요약, 수정, soft delete를 처리합니다.
+- `App\Controllers\WorkEntryController`에서 근무 기록 API 요청/응답을 처리합니다.
+- 일반 사용자는 본인 기록만 접근할 수 있고, 관리자는 `userId` 파라미터로 대상 사용자를 지정할 수 있습니다.
+- 근무 시간은 `startAt`, `endAt`, `breakMinutes`를 기준으로 검증하고 `work_minutes`를 계산합니다.
+- 동일 사용자의 겹치는 `active` 근무 시간대는 등록할 수 없습니다.
+- 수정 시 `version`을 증가시키고, 삭제는 `status=deleted`, `deleted_at`을 기록하는 soft delete로 처리합니다.
+- 생성/수정/삭제는 `AuditLogService::recordInTransaction()`으로 감사 로그와 같은 트랜잭션에서 처리합니다.
+
 ### 웹훅
 
 - `POST /api/webhooks/work-summary` 근무시간 요약 텔레그램 발송

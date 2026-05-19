@@ -7,15 +7,19 @@ require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
 require_once __DIR__ . '/app/Services/AuditLogService.php';
 require_once __DIR__ . '/app/Services/AuthService.php';
+require_once __DIR__ . '/app/Services/WorkEntryService.php';
 require_once __DIR__ . '/app/Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/app/Controllers/AuthController.php';
+require_once __DIR__ . '/app/Controllers/WorkEntryController.php';
 
 use App\Controllers\AuthController;
+use App\Controllers\WorkEntryController;
 use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
 use App\Services\AuditLogService;
 use App\Services\AuthService;
+use App\Services\WorkEntryService;
 
 Env::load(__DIR__ . '/.env');
 date_default_timezone_set(Env::get('APP_TIMEZONE', 'Asia/Seoul'));
@@ -59,6 +63,10 @@ function authRuntimeStatus(\RuntimeException $e): int
         return 409;
     }
 
+    if ($message === '같은 시간대의 근무 기록이 이미 있습니다.') {
+        return 409;
+    }
+
     if (
         $message === '이메일 또는 비밀번호가 올바르지 않습니다.' ||
         $message === '로그인이 필요합니다.' ||
@@ -69,6 +77,14 @@ function authRuntimeStatus(\RuntimeException $e): int
 
     if ($message === '접근 권한이 없습니다.') {
         return 403;
+    }
+
+    if (
+        $message === '근무 기록을 찾을 수 없습니다.' ||
+        $message === '수정된 근무 기록을 찾을 수 없습니다.' ||
+        $message === '삭제된 근무 기록을 찾을 수 없습니다.'
+    ) {
+        return 404;
     }
 
     return 400;
@@ -95,21 +111,42 @@ function requestContext(): array
 
 if (str_starts_with($path, '/api/')) {
     $authService = new AuthService();
+    $auditLogService = new AuditLogService();
+    $authMiddleware = new AuthMiddleware($authService);
+    $requestContext = requestContext();
     $authController = new AuthController(
         $authService,
-        new AuthMiddleware($authService),
-        new AuditLogService(),
-        requestContext()
+        $authMiddleware,
+        $auditLogService,
+        $requestContext
+    );
+    $workEntryController = new WorkEntryController(
+        new WorkEntryService($auditLogService, $requestContext),
+        $authMiddleware
     );
 
     try {
+        $workEntryId = $path === '/api/work-entries/summary'
+            ? null
+            : WorkEntryController::routeId($path, '/api/work-entries/');
         $result = match ([$method, $path]) {
             ['POST', '/api/auth/signup'] => $authController->signup(readJsonPayload()),
             ['POST', '/api/auth/login'] => $authController->login(readJsonPayload()),
             ['POST', '/api/auth/logout'] => $authController->logout(),
             ['GET', '/api/me'] => $authController->me(),
+            ['POST', '/api/work-entries'] => $workEntryController->create(readJsonPayload()),
+            ['GET', '/api/work-entries'] => $workEntryController->list($_GET),
+            ['GET', '/api/work-entries/summary'] => $workEntryController->summary($_GET),
             default => null,
         };
+
+        if ($result === null && $workEntryId !== null && $method === 'PATCH') {
+            $result = $workEntryController->update($workEntryId, readJsonPayload());
+        }
+
+        if ($result === null && $workEntryId !== null && $method === 'DELETE') {
+            $result = $workEntryController->delete($workEntryId);
+        }
 
         if ($result === null) {
             jsonResponse(['message' => 'Not Found'], 404);
