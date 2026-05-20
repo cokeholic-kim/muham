@@ -5,6 +5,7 @@ namespace App\Controllers;
 
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
+use App\Services\CsrfService;
 use App\Services\SessionService;
 use App\Services\WorkEntryService;
 use InvalidArgumentException;
@@ -39,6 +40,11 @@ final class WebController
      */
     public function login(array $payload): never
     {
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/login');
+        }
+
         try {
             $this->authController->login($payload);
             $this->flash('success', '로그인되었습니다.');
@@ -63,6 +69,11 @@ final class WebController
      */
     public function signup(array $payload): never
     {
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/signup');
+        }
+
         try {
             $this->authController->signup($payload);
             $this->flash('success', '회원가입이 완료되었습니다.');
@@ -75,6 +86,11 @@ final class WebController
 
     public function logout(): never
     {
+        if (!$this->validateCsrf($_POST)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/work-entries');
+        }
+
         $this->authController->logout();
         $this->flash('success', '로그아웃되었습니다.');
         $this->redirect('/login');
@@ -107,6 +123,11 @@ final class WebController
     {
         $user = $this->requireWebUser();
 
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect($this->backToWorkEntries());
+        }
+
         try {
             $this->workEntryService->create($user, $this->formToWorkPayload($payload));
             $this->flash('success', '근무 기록이 저장되었습니다.');
@@ -137,6 +158,11 @@ final class WebController
     {
         $user = $this->requireWebUser();
 
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/work-entries/' . $id . '/edit');
+        }
+
         try {
             $this->workEntryService->update($user, $id, $this->formToWorkPayload($payload));
             $this->flash('success', '근무 기록이 수정되었습니다.');
@@ -150,6 +176,11 @@ final class WebController
     public function deleteWorkEntry(int $id): never
     {
         $user = $this->requireWebUser();
+
+        if (!$this->validateCsrf($_POST)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect($this->backToWorkEntries());
+        }
 
         try {
             $this->workEntryService->delete($user, $id);
@@ -203,6 +234,7 @@ final class WebController
                     <h1 class="h3 mb-3">%s</h1>
                     <form class="border rounded-2 bg-white p-4" method="post" action="%s">
                         %s
+                        %s
                         <div class="mb-3"><label class="form-label" for="email">이메일</label><input class="form-control" id="email" type="email" name="email" required autocomplete="email"></div>
                         <div class="mb-3"><label class="form-label" for="password">비밀번호</label><input class="form-control" id="password" type="password" name="password" required autocomplete="current-password" minlength="8"></div>
                         <button class="btn btn-primary w-100" type="submit">%s</button>
@@ -212,6 +244,7 @@ final class WebController
             </div>',
             $this->h($title),
             $this->h($action),
+            CsrfService::input(),
             $nameField,
             $this->h($button),
             $this->h($altText),
@@ -241,7 +274,7 @@ final class WebController
                     <td class="text-end">%s</td>
                     <td class="text-end">
                         <a class="btn btn-sm btn-outline-secondary" href="/work-entries/%d/edit">수정</a>
-                        <form class="d-inline" method="post" action="/work-entries/%d/delete" onsubmit="return confirm(\'삭제하시겠습니까?\')"><button class="btn btn-sm btn-outline-danger" type="submit">삭제</button></form>
+                        <form class="d-inline" method="post" action="/work-entries/%d/delete" onsubmit="return confirm(\'삭제하시겠습니까?\')">%s<button class="btn btn-sm btn-outline-danger" type="submit">삭제</button></form>
                     </td>
                 </tr>',
                 $this->h((string)$entry['work_date']),
@@ -252,7 +285,8 @@ final class WebController
                 $this->h((string)($entry['memo'] ?? '')),
                 $this->h((string)$entry['version']),
                 (int)$entry['id'],
-                (int)$entry['id']
+                (int)$entry['id'],
+                CsrfService::input()
             );
         }
 
@@ -263,7 +297,7 @@ final class WebController
         return sprintf(
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
                 <div><h1 class="h3 mb-1">근무시간</h1><p class="text-secondary mb-0">%s · %s</p></div>
-                <form method="post" action="/logout"><button class="btn btn-outline-secondary" type="submit">로그아웃</button></form>
+                <form method="post" action="/logout">%s<button class="btn btn-outline-secondary" type="submit">로그아웃</button></form>
             </div>
             <section class="border rounded-2 bg-white p-3 mb-3">
                 <form class="row g-3 align-items-end" method="get" action="/work-entries">
@@ -278,6 +312,7 @@ final class WebController
             <section class="border rounded-2 bg-white p-3 mb-3">
                 <h2 class="h5 mb-3">근무시간 입력</h2>
                 <form class="row g-3" method="post" action="/work-entries">
+                    %s
                     <input type="hidden" name="from" value="%s"><input type="hidden" name="to" value="%s">
                     <div class="col-12 col-md-3"><label class="form-label" for="workDate">근무일</label><input class="form-control" id="workDate" type="date" name="workDate" required></div>
                     <div class="col-6 col-md-2"><label class="form-label" for="startTime">시작</label><input class="form-control" id="startTime" type="time" name="startTime" required></div>
@@ -297,9 +332,11 @@ final class WebController
             </section>',
             $this->h((string)$user['name']),
             $this->h((string)$user['email']),
+            CsrfService::input(),
             $this->h($from),
             $this->h($to),
             $this->summaryCards($summary),
+            CsrfService::input(),
             $this->h($from),
             $this->h($to),
             $rows
@@ -319,6 +356,7 @@ final class WebController
                 <a class="btn btn-outline-secondary" href="/work-entries">목록</a>
             </div>
             <form class="border rounded-2 bg-white p-3 row g-3" method="post" action="/work-entries/%d/edit">
+                %s
                 <div class="col-12 col-md-3"><label class="form-label" for="workDate">근무일</label><input class="form-control" id="workDate" type="date" name="workDate" value="%s" required></div>
                 <div class="col-6 col-md-2"><label class="form-label" for="startTime">시작</label><input class="form-control" id="startTime" type="time" name="startTime" value="%s" required></div>
                 <div class="col-6 col-md-2"><label class="form-label" for="endTime">종료</label><input class="form-control" id="endTime" type="time" name="endTime" value="%s" required></div>
@@ -328,6 +366,7 @@ final class WebController
             </form>',
             $this->h($date),
             (int)$entry['id'],
+            CsrfService::input(),
             $this->h($date),
             $this->h(substr((string)$entry['start_at'], 11, 5)),
             $this->h(substr((string)$entry['end_at'], 11, 5)),
@@ -462,6 +501,7 @@ final class WebController
         }
 
         http_response_code(200);
+        $this->securityHeaders();
         header('Content-Type: text/html; charset=utf-8');
         echo '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<title>' . $this->h($title) . ' · 근무시간 관리</title>';
@@ -478,6 +518,24 @@ final class WebController
     {
         SessionService::start();
         $_SESSION['flash'] = ['type' => $type, 'message' => $message];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function validateCsrf(array $payload): bool
+    {
+        $token = $payload[CsrfService::FIELD_NAME] ?? null;
+
+        return is_string($token) && CsrfService::validate($token);
+    }
+
+    private function securityHeaders(): void
+    {
+        header('X-Frame-Options: DENY');
+        header('X-Content-Type-Options: nosniff');
+        header('Referrer-Policy: same-origin');
+        header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
     }
 
     private function redirect(string $path): never

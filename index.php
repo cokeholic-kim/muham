@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/app/Config/Env.php';
+require_once __DIR__ . '/app/Services/CsrfService.php';
 require_once __DIR__ . '/app/Services/SessionService.php';
 require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
@@ -39,9 +40,18 @@ $routeMethod = $method === 'HEAD' ? 'GET' : $method;
 function jsonResponse(array $body, int $status = 200): never
 {
     http_response_code($status);
+    securityHeaders();
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     exit;
+}
+
+function securityHeaders(): void
+{
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: same-origin');
+    header("Permissions-Policy: camera=(), microphone=(), geolocation=()");
 }
 
 /**
@@ -256,6 +266,7 @@ if (preg_match('#^/work-entries/([1-9][0-9]*)/delete$#', $path, $matches) === 1 
 }
 
 http_response_code(404);
+securityHeaders();
 header('Content-Type: text/plain; charset=utf-8');
 echo 'Not Found';
 exit;

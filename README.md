@@ -11,6 +11,7 @@
 - [Implementation Plan: 구현 계획](docs/IMPLEMENTATION_PLAN.md)
 - [Docker Guide: 로컬 실행 환경](docs/DOCKER_GUIDE.md)
 - [Deploy Guide: GitHub Actions 배포](docs/DEPLOY_GUIDE.md)
+- [Security Operations Guide: 운영 보안](docs/SECURITY_OPERATIONS.md)
 
 ## 기술 스택
 
