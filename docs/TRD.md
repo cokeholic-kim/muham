@@ -315,6 +315,16 @@ TELEGRAM_DEFAULT_CHAT_ID=
 
 - `POST /api/webhooks/work-summary` 근무시간 요약 텔레그램 발송
 
+현재 구현:
+
+- `App\Controllers\WebhookController`에서 `POST /api/webhooks/work-summary` 요청을 처리합니다.
+- `App\Services\WebhookService`에서 IP allowlist, 유효 기간, shared secret, `requestId` 중복 방지, 기간별 근무 요약 생성을 처리합니다.
+- `App\Services\TelegramService`에서 Telegram Bot API `sendMessage`를 호출합니다.
+- shared secret은 `X-Webhook-Secret` 헤더 또는 `Authorization: Bearer ...`로 전달합니다.
+- 웹훅 결과는 `webhook_events`에 `success`, `rejected`, `failed`로 저장합니다.
+- 웹훅 요약과 거부 결과는 `audit_logs`에 `webhook_summary`, `webhook_rejected`로 기록합니다.
+- 텔레그램 토큰 또는 chat id가 없으면 요약은 생성하고 발송 실패/스킵 상태를 기록합니다.
+
 ## 11. 웹훅 처리 흐름
 
 1. 요청 IP가 허용 목록에 있는지 확인합니다.

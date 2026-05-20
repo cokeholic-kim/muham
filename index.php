@@ -7,20 +7,26 @@ require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
 require_once __DIR__ . '/app/Services/AuditLogService.php';
 require_once __DIR__ . '/app/Services/AuthService.php';
+require_once __DIR__ . '/app/Services/TelegramService.php';
+require_once __DIR__ . '/app/Services/WebhookService.php';
 require_once __DIR__ . '/app/Services/WorkEntryService.php';
 require_once __DIR__ . '/app/Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/app/Controllers/AuthController.php';
+require_once __DIR__ . '/app/Controllers/WebhookController.php';
 require_once __DIR__ . '/app/Controllers/WorkEntryController.php';
 require_once __DIR__ . '/app/Controllers/WebController.php';
 
 use App\Controllers\AuthController;
 use App\Controllers\WebController;
+use App\Controllers\WebhookController;
 use App\Controllers\WorkEntryController;
 use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
 use App\Services\AuditLogService;
 use App\Services\AuthService;
+use App\Services\TelegramService;
+use App\Services\WebhookService;
 use App\Services\WorkEntryService;
 
 Env::load(__DIR__ . '/.env');
@@ -28,6 +34,7 @@ date_default_timezone_set(Env::get('APP_TIMEZONE', 'Asia/Seoul'));
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$routeMethod = $method === 'HEAD' ? 'GET' : $method;
 
 function jsonResponse(array $body, int $status = 200): never
 {
@@ -69,6 +76,10 @@ function authRuntimeStatus(\RuntimeException $e): int
         return 409;
     }
 
+    if ($message === '이미 처리된 requestId입니다.') {
+        return 409;
+    }
+
     if (
         $message === '이메일 또는 비밀번호가 올바르지 않습니다.' ||
         $message === '로그인이 필요합니다.' ||
@@ -84,7 +95,8 @@ function authRuntimeStatus(\RuntimeException $e): int
     if (
         $message === '근무 기록을 찾을 수 없습니다.' ||
         $message === '수정된 근무 기록을 찾을 수 없습니다.' ||
-        $message === '삭제된 근무 기록을 찾을 수 없습니다.'
+        $message === '삭제된 근무 기록을 찾을 수 없습니다.' ||
+        $message === '대상 사용자를 찾을 수 없습니다.'
     ) {
         return 404;
     }
@@ -126,12 +138,15 @@ if (str_starts_with($path, '/api/')) {
         new WorkEntryService($auditLogService, $requestContext),
         $authMiddleware
     );
+    $webhookController = new WebhookController(
+        new WebhookService($auditLogService, new TelegramService(), $requestContext)
+    );
 
     try {
         $workEntryId = $path === '/api/work-entries/summary'
             ? null
             : WorkEntryController::routeId($path, '/api/work-entries/');
-        $result = match ([$method, $path]) {
+        $result = match ([$routeMethod, $path]) {
             ['POST', '/api/auth/signup'] => $authController->signup(readJsonPayload()),
             ['POST', '/api/auth/login'] => $authController->login(readJsonPayload()),
             ['POST', '/api/auth/logout'] => $authController->logout(),
@@ -139,6 +154,7 @@ if (str_starts_with($path, '/api/')) {
             ['POST', '/api/work-entries'] => $workEntryController->create(readJsonPayload()),
             ['GET', '/api/work-entries'] => $workEntryController->list($_GET),
             ['GET', '/api/work-entries/summary'] => $workEntryController->summary($_GET),
+            ['POST', '/api/webhooks/work-summary'] => $webhookController->workSummary(readJsonPayload()),
             default => null,
         };
 
@@ -189,15 +205,15 @@ $webController = new WebController(
     new WorkEntryService($auditLogService, $requestContext)
 );
 
-if ($path === '/' && $method === 'GET') {
+if ($path === '/' && $routeMethod === 'GET') {
     $webController->home();
 }
 
-if ($path === '/health' && $method === 'GET') {
+if ($path === '/health' && $routeMethod === 'GET') {
     $webController->health();
 }
 
-if ($path === '/login' && $method === 'GET') {
+if ($path === '/login' && $routeMethod === 'GET') {
     $webController->loginForm();
 }
 
@@ -205,7 +221,7 @@ if ($path === '/login' && $method === 'POST') {
     $webController->login($_POST);
 }
 
-if ($path === '/signup' && $method === 'GET') {
+if ($path === '/signup' && $routeMethod === 'GET') {
     $webController->signupForm();
 }
 
@@ -217,7 +233,7 @@ if ($path === '/logout' && $method === 'POST') {
     $webController->logout();
 }
 
-if ($path === '/work-entries' && $method === 'GET') {
+if ($path === '/work-entries' && $routeMethod === 'GET') {
     $webController->workEntries($_GET);
 }
 
@@ -226,7 +242,7 @@ if ($path === '/work-entries' && $method === 'POST') {
 }
 
 if (preg_match('#^/work-entries/([1-9][0-9]*)/edit$#', $path, $matches) === 1) {
-    if ($method === 'GET') {
+    if ($routeMethod === 'GET') {
         $webController->editWorkEntryForm((int)$matches[1]);
     }
 
