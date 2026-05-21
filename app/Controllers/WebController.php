@@ -369,7 +369,7 @@ final class WebController
                         %s
                         %s
                         <div class="mb-3"><label class="form-label" for="email">이메일</label><input class="form-control" id="email" type="email" name="email" required autocomplete="email"></div>
-                        <div class="mb-3"><label class="form-label" for="password">비밀번호</label><input class="form-control" id="password" type="password" name="password" required autocomplete="current-password" minlength="8"></div>
+                        <div class="mb-3"><label class="form-label" for="password">비밀번호</label><input class="form-control" id="password" type="password" name="password" required autocomplete="current-password" minlength="10"></div>
                         <button class="btn btn-primary w-100" type="submit">%s</button>
                     </form>
                     <div class="mt-3 text-center text-secondary">%s <a href="%s">%s</a></div>
@@ -808,13 +808,15 @@ final class WebController
     private function entriesTable(array $entries, string $returnTo): string
     {
         return sprintf(
-            '<div class="table-responsive">
+            '<div class="d-none d-md-block table-responsive">
                 <table class="table table-hover align-middle mb-0">
                     <thead><tr><th>근무일</th><th>시작</th><th>종료</th><th class="text-end">휴게</th><th class="text-end">실근무</th><th>메모</th><th class="text-end">버전</th><th class="text-end">작업</th></tr></thead>
                     <tbody>%s</tbody>
                 </table>
-            </div>',
-            $this->entryRows($entries, $returnTo)
+            </div>
+            <div class="d-md-none">%s</div>',
+            $this->entryRows($entries, $returnTo),
+            $this->entryCards($entries, $returnTo)
         );
     }
 
@@ -860,6 +862,66 @@ final class WebController
         }
 
         return $rows;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     */
+    private function entryCards(array $entries, string $returnTo): string
+    {
+        if ($entries === []) {
+            return '<div class="text-center text-secondary py-4">조회된 근무 기록이 없습니다.</div>';
+        }
+
+        $cards = '<div class="list-group list-group-flush">';
+
+        foreach ($entries as $entry) {
+            $cards .= sprintf(
+                '<div class="list-group-item p-3">
+                    <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                        <div>
+                            <div class="fw-semibold">%s</div>
+                            <div class="text-secondary small">%s ~ %s</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-semibold">%s</div>
+                            <div class="text-secondary small">휴게 %s분</div>
+                        </div>
+                    </div>
+                    %s
+                    <div class="d-flex justify-content-between align-items-center gap-2 mt-3">
+                        <span class="text-secondary small">버전 %s</span>
+                        <div class="d-flex gap-2">
+                            <a class="btn btn-sm btn-outline-secondary" href="/work-entries/%d/edit?returnTo=%s">수정</a>
+                            <form method="post" action="/work-entries/%d/delete" onsubmit="return confirm(\'삭제하시겠습니까?\')">%s<input type="hidden" name="returnTo" value="%s"><button class="btn btn-sm btn-outline-danger" type="submit">삭제</button></form>
+                        </div>
+                    </div>
+                </div>',
+                $this->h((string)$entry['work_date']),
+                $this->h(substr((string)$entry['start_at'], 11, 5)),
+                $this->h(substr((string)$entry['end_at'], 11, 5)),
+                $this->h($this->formatMinutes((int)$entry['work_minutes'])),
+                $this->h((string)$entry['break_minutes']),
+                $this->entryMemoBlock($entry['memo'] ?? null),
+                $this->h((string)$entry['version']),
+                (int)$entry['id'],
+                rawurlencode($returnTo),
+                (int)$entry['id'],
+                CsrfService::input(),
+                $this->h($returnTo)
+            );
+        }
+
+        return $cards . '</div>';
+    }
+
+    private function entryMemoBlock(mixed $memo): string
+    {
+        if (!is_string($memo) || trim($memo) === '') {
+            return '';
+        }
+
+        return sprintf('<div class="text-secondary small text-break">%s</div>', $this->h($memo));
     }
 
     private function workEntryFormFields(): string

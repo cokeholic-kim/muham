@@ -10,6 +10,7 @@ require_once __DIR__ . '/app/Services/AiCredentialService.php';
 require_once __DIR__ . '/app/Services/AuditLogService.php';
 require_once __DIR__ . '/app/Services/AuthService.php';
 require_once __DIR__ . '/app/Services/DiscordService.php';
+require_once __DIR__ . '/app/Services/LoginAttemptService.php';
 require_once __DIR__ . '/app/Services/NotificationSettingService.php';
 require_once __DIR__ . '/app/Services/TelegramService.php';
 require_once __DIR__ . '/app/Services/WebhookRequestLogService.php';
@@ -33,6 +34,7 @@ use App\Services\AiCredentialService;
 use App\Services\AuditLogService;
 use App\Services\AuthService;
 use App\Services\DiscordService;
+use App\Services\LoginAttemptService;
 use App\Services\NotificationSettingService;
 use App\Services\TelegramService;
 use App\Services\WebhookRequestLogService;
@@ -119,6 +121,13 @@ function authRuntimeStatus(\RuntimeException $e): int
     }
 
     if (
+        $message === '로그인 실패 횟수가 많아 10분 후 다시 시도해야 합니다.' ||
+        $message === '현재 IP에서 로그인 실패가 많아 10분 후 다시 시도해야 합니다.'
+    ) {
+        return 429;
+    }
+
+    if (
         $message === '이메일 또는 비밀번호가 올바르지 않습니다.' ||
         $message === '로그인이 필요합니다.' ||
         $message === '세션 사용자를 찾을 수 없습니다.'
@@ -164,12 +173,14 @@ function requestContext(): array
 if (str_starts_with($path, '/api/')) {
     $authService = new AuthService();
     $auditLogService = new AuditLogService();
+    $loginAttemptService = new LoginAttemptService();
     $authMiddleware = new AuthMiddleware($authService);
     $requestContext = requestContext();
     $authController = new AuthController(
         $authService,
         $authMiddleware,
         $auditLogService,
+        $loginAttemptService,
         $requestContext
     );
     $workEntryController = new WorkEntryController(
@@ -274,11 +285,12 @@ if ($path === '/favicon.ico') {
 
 $authService = new AuthService();
 $auditLogService = new AuditLogService();
+$loginAttemptService = new LoginAttemptService();
 $authMiddleware = new AuthMiddleware($authService);
 $requestContext = requestContext();
 $aiCredentialService = new AiCredentialService();
 $webController = new WebController(
-    new AuthController($authService, $authMiddleware, $auditLogService, $requestContext),
+    new AuthController($authService, $authMiddleware, $auditLogService, $loginAttemptService, $requestContext),
     $authMiddleware,
     new WorkEntryService($auditLogService, $requestContext),
     new WorkEntryImportService($aiCredentialService),

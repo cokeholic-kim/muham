@@ -455,6 +455,7 @@ final class WebhookService
             'gross_minutes' => (int)$row['gross_minutes'],
             'break_minutes' => (int)$row['break_minutes'],
             'work_minutes' => (int)$row['work_minutes'],
+            'daily_entries' => $this->dailyEntries($pdo, $userId, $from, $to),
         ];
     }
 
@@ -463,7 +464,7 @@ final class WebhookService
      */
     private function message(array $summary): string
     {
-        return sprintf(
+        $message = sprintf(
             "[근무시간 요약]\n대상 사용자: %s <%s>\n대상 기간: %s ~ %s\n총 근무일: %d일\n총 기록: %d건\n총 근무시간: %s\n총 휴게시간: %s\n실제 근무시간: %s\n마지막 정리 시각: %s",
             $summary['name'],
             $summary['email'],
@@ -476,6 +477,156 @@ final class WebhookService
             $this->formatMinutes((int)$summary['work_minutes']),
             date('Y-m-d H:i:s')
         );
+
+        return $message . "\n\n[근거 기록]\n" . $this->detailLines($summary['daily_entries'] ?? []);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function dailyEntries(PDO $pdo, int $userId, string $from, string $to): array
+    {
+        $statement = $pdo->prepare(
+            'SELECT
+                work_date,
+                start_at,
+                end_at,
+                break_minutes,
+                work_minutes
+            FROM work_entries
+            WHERE user_id = :user_id
+              AND status = :status
+              AND deleted_at IS NULL
+              AND work_date BETWEEN :from_date AND :to_date
+            ORDER BY work_date ASC, start_at ASC, id ASC'
+        );
+        $statement->execute([
+            'user_id' => $userId,
+            'status' => 'active',
+            'from_date' => $from,
+            'to_date' => $to,
+        ]);
+
+        $days = [];
+
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $date = (string)$row['work_date'];
+
+            if (!isset($days[$date])) {
+                $days[$date] = [
+                    'date' => $date,
+                    'sessions' => [],
+                    'work_minutes' => 0,
+                    'break_minutes' => 0,
+                ];
+            }
+
+            $days[$date]['sessions'][] = [
+                'start' => substr((string)$row['start_at'], 11, 5),
+                'end' => substr((string)$row['end_at'], 11, 5),
+                'work_minutes' => (int)$row['work_minutes'],
+                'break_minutes' => (int)$row['break_minutes'],
+            ];
+            $days[$date]['work_minutes'] += (int)$row['work_minutes'];
+            $days[$date]['break_minutes'] += (int)$row['break_minutes'];
+        }
+
+        return array_values($days);
+    }
+
+    /**
+     * @param mixed $dailyEntries
+     */
+    private function detailLines(mixed $dailyEntries): string
+    {
+        if (!is_array($dailyEntries) || $dailyEntries === []) {
+            return '조회된 근무 기록이 없습니다.';
+        }
+
+        $lines = [];
+
+        foreach ($dailyEntries as $day) {
+            if (!is_array($day)) {
+                continue;
+            }
+
+            $date = (string)($day['date'] ?? '');
+            $sessions = is_array($day['sessions'] ?? null) ? $day['sessions'] : [];
+            $sessionTexts = [];
+
+            foreach ($sessions as $session) {
+                if (!is_array($session)) {
+                    continue;
+                }
+
+                $sessionTexts[] = sprintf(
+                    '%s ~ %s',
+                    $this->trimTime((string)($session['start'] ?? '')),
+                    $this->trimTime((string)($session['end'] ?? ''))
+                );
+            }
+
+            if ($date === '' || $sessionTexts === []) {
+                continue;
+            }
+
+            $lines[] = sprintf(
+                '%s %s %s ( %s )',
+                $this->formatShortDate($date),
+                $this->weekday($date),
+                implode(' , ', $sessionTexts),
+                $this->formatHours((int)($day['work_minutes'] ?? 0))
+            );
+        }
+
+        return $lines === [] ? '조회된 근무 기록이 없습니다.' : implode("\n", $lines);
+    }
+
+    private function formatShortDate(string $date): string
+    {
+        $timestamp = strtotime($date);
+
+        if ($timestamp === false) {
+            return $date;
+        }
+
+        return date('n/j', $timestamp);
+    }
+
+    private function weekday(string $date): string
+    {
+        $timestamp = strtotime($date);
+
+        if ($timestamp === false) {
+            return '';
+        }
+
+        return ['일', '월', '화', '수', '목', '금', '토'][(int)date('w', $timestamp)];
+    }
+
+    private function trimTime(string $time): string
+    {
+        if (preg_match('/^0?(\d{1,2}):00$/', $time, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if (preg_match('/^0(\d:\d{2})$/', $time, $matches) === 1) {
+            return $matches[1];
+        }
+
+        return $time;
+    }
+
+    private function formatHours(int $minutes): string
+    {
+        if ($minutes % 60 === 0) {
+            return (string)intdiv($minutes, 60) . '시간';
+        }
+
+        $hours = $minutes / 60;
+        $text = rtrim(rtrim(number_format($hours, 2, '.', ''), '0'), '.');
+
+        return $text . '시간';
     }
 
     private function isAllowedIp(string $sourceIp): bool

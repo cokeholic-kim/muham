@@ -6,6 +6,7 @@ namespace App\Controllers;
 use App\Middleware\AuthMiddleware;
 use App\Services\AuditLogService;
 use App\Services\AuthService;
+use App\Services\LoginAttemptService;
 use App\Services\SessionService;
 use InvalidArgumentException;
 use RuntimeException;
@@ -16,6 +17,7 @@ final class AuthController
         private readonly AuthService $authService,
         private readonly AuthMiddleware $authMiddleware,
         private readonly AuditLogService $auditLogService,
+        private readonly LoginAttemptService $loginAttemptService,
         /** @var array<string, string|null> */
         private readonly array $requestContext
     ) {
@@ -66,10 +68,33 @@ final class AuthController
     public function login(array $payload): array
     {
         $email = $this->stringValue($payload, 'email');
+        $sourceIp = (string)($this->requestContext['request_ip'] ?? '');
+
+        try {
+            $this->loginAttemptService->assertAllowed($email, $sourceIp);
+        } catch (RuntimeException $e) {
+            $this->auditLogService->record(
+                null,
+                null,
+                'login_blocked',
+                'user',
+                null,
+                null,
+                [
+                    'email' => strtolower(trim($email)),
+                    'result' => 'blocked',
+                    'reason' => $e->getMessage(),
+                ],
+                $this->requestContext
+            );
+
+            throw $e;
+        }
 
         try {
             $user = $this->authService->login($email, $this->stringValue($payload, 'password'));
-        } catch (RuntimeException $e) {
+        } catch (InvalidArgumentException|RuntimeException $e) {
+            $this->loginAttemptService->recordFailure($email, $sourceIp, $e->getMessage());
             $this->auditLogService->record(
                 null,
                 null,
@@ -88,6 +113,7 @@ final class AuthController
             throw $e;
         }
 
+        $this->loginAttemptService->recordSuccess($email, $sourceIp);
         SessionService::login((int)$user['id'], (string)$user['role']);
         $this->auditLogService->record(
             (int)$user['id'],

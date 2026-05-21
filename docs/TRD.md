@@ -209,7 +209,7 @@ TELEGRAM_DEFAULT_CHAT_ID=
 - `App\Middleware\AuthMiddleware`에서 로그인 사용자 확인과 역할 체크를 처리합니다.
 - 공개 회원가입은 기본 `user` 역할만 생성합니다.
 - `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me`가 구현되어 있습니다.
-- 감사 로그 기록과 로그인 실패 제한은 후속 보안 작업에서 연결합니다.
+- 로그인 성공, 실패, 차단 이벤트는 감사 로그에 기록하고, 실패 제한은 `login_attempts` 기준으로 처리합니다.
 
 ## 9. 데이터 모델
 
@@ -225,6 +225,17 @@ TELEGRAM_DEFAULT_CHAT_ID=
 | telegram_chat_id | 사용자별 텔레그램 수신처 |
 | created_at | 가입 시각 |
 | updated_at | 수정 시각 |
+
+### login_attempts
+
+| 필드 | 설명 |
+| --- | --- |
+| id | 로그인 시도 ID |
+| email | 시도한 이메일. 소문자 정규화 |
+| source_ip | 요청 IP |
+| success | 성공 여부 |
+| failure_reason | 실패 사유 |
+| created_at | 시도 시각 |
 
 ### work_entries
 
@@ -271,6 +282,7 @@ TELEGRAM_DEFAULT_CHAT_ID=
 - `record()`는 단독 감사 로그를 기록하고, `recordInTransaction()`은 다른 데이터 변경과 같은 트랜잭션 안에서 감사 로그를 기록합니다.
 - 새 감사 로그는 직전 감사 로그의 `hash`를 `prev_hash`로 저장하고, 정규화한 로그 데이터로 SHA-256 `hash`를 생성합니다.
 - `signup`, `login`, `login_failed`, `logout` 이벤트는 인증 API에서 감사 로그로 기록합니다.
+- 로그인 실패 제한에 걸린 요청은 `login_blocked` 이벤트로 감사 로그에 기록합니다.
 - 요청의 `X-Request-Id`가 있으면 사용하고, 없으면 서버에서 요청 ID를 생성해 `request_id`에 저장합니다.
 
 ### webhook_events
@@ -344,6 +356,13 @@ TELEGRAM_DEFAULT_CHAT_ID=
 - `POST /api/auth/login` 로그인
 - `POST /api/auth/logout` 로그아웃
 - `GET /api/me` 내 정보 조회
+
+현재 구현:
+
+- 로그인 전 `App\Services\LoginAttemptService`에서 이메일별 10분 5회 실패, IP별 10분 20회 실패를 제한합니다.
+- 로그인 실패와 성공은 `login_attempts`에 기록하고, 성공 시 같은 이메일과 IP 조합의 실패 카운트를 초기화합니다.
+- 비밀번호는 10자 이상이어야 하며 이메일 또는 이메일 계정명을 포함하거나 흔한 비밀번호와 같은 값은 거부합니다.
+- 세션은 12시간 절대 만료, 2시간 유휴 만료 정책을 적용합니다.
 
 ### 근무시간
 

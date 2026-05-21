@@ -17,7 +17,7 @@ final class AuthService
         $email = $this->normalizeEmail($email);
         $name = trim($name);
 
-        $this->assertPassword($password);
+        $this->assertPassword($password, $email);
 
         if ($name === '' || strlen($name) > 100) {
             throw new InvalidArgumentException('이름은 1자 이상 100자 이하로 입력해야 합니다.');
@@ -105,10 +105,35 @@ final class AuthService
         return $email;
     }
 
-    private function assertPassword(string $password): void
+    private function assertPassword(string $password, string $email): void
     {
-        if (strlen($password) < 8) {
-            throw new InvalidArgumentException('비밀번호는 8자 이상이어야 합니다.');
+        if (strlen($password) < 10) {
+            throw new InvalidArgumentException('비밀번호는 10자 이상이어야 합니다.');
+        }
+
+        if (strtolower($password) === strtolower($email)) {
+            throw new InvalidArgumentException('이메일과 같은 비밀번호는 사용할 수 없습니다.');
+        }
+
+        $localPart = strtolower(strstr($email, '@', true) ?: '');
+
+        if ($localPart !== '' && str_contains(strtolower($password), $localPart)) {
+            throw new InvalidArgumentException('이메일 계정명을 포함한 비밀번호는 사용할 수 없습니다.');
+        }
+
+        $commonPasswords = [
+            'password',
+            'password1',
+            'password123',
+            'qwerty123',
+            'admin12345',
+            'letmein123',
+            '1234567890',
+            '1111111111',
+        ];
+
+        if (in_array(strtolower($password), $commonPasswords, true)) {
+            throw new InvalidArgumentException('너무 흔한 비밀번호는 사용할 수 없습니다.');
         }
     }
 
