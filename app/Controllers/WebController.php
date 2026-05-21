@@ -360,6 +360,9 @@ final class WebController
         $nameField = $action === '/signup'
             ? '<div class="mb-3"><label class="form-label" for="name">이름</label><input class="form-control" id="name" name="name" required maxlength="100"></div>'
             : '';
+        $passwordAttributes = $action === '/signup'
+            ? 'autocomplete="new-password" minlength="10"'
+            : 'autocomplete="current-password"';
 
         return sprintf(
             '<div class="row justify-content-center">
@@ -369,7 +372,7 @@ final class WebController
                         %s
                         %s
                         <div class="mb-3"><label class="form-label" for="email">이메일</label><input class="form-control" id="email" type="email" name="email" required autocomplete="email"></div>
-                        <div class="mb-3"><label class="form-label" for="password">비밀번호</label><input class="form-control" id="password" type="password" name="password" required autocomplete="current-password" minlength="10"></div>
+                        <div class="mb-3"><label class="form-label" for="password">비밀번호</label><input class="form-control" id="password" type="password" name="password" required %s></div>
                         <button class="btn btn-primary w-100" type="submit">%s</button>
                     </form>
                     <div class="mt-3 text-center text-secondary">%s <a href="%s">%s</a></div>
@@ -379,6 +382,7 @@ final class WebController
             $this->h($action),
             CsrfService::input(),
             $nameField,
+            $passwordAttributes,
             $this->h($button),
             $this->h($altText),
             $this->h($altHref),
