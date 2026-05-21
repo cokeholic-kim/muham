@@ -612,14 +612,14 @@ final class WebController
                     </div>
                     <div class="col-12">
                         <label class="form-label d-block">요약 기간 기준</label>
-                        <div class="d-flex flex-wrap gap-2">%s</div>
+                        <div class="d-flex flex-wrap gap-2" data-summary-period-options>%s</div>
                         <div class="form-text">외부 서버는 매일 실행 신호만 보내고, 실제 요약 기간은 선택한 기준으로 자동 계산합니다.</div>
                     </div>
-                    <div class="col-12 col-md-4">
+                    <div class="col-12 col-md-4%s" data-custom-period-panel>
                         <label class="form-label" for="customPeriodFrom">직접 지정 시작일</label>
                         <input class="form-control" id="customPeriodFrom" type="date" name="customPeriodFrom" value="%s">
                     </div>
-                    <div class="col-12 col-md-4">
+                    <div class="col-12 col-md-4%s" data-custom-period-panel>
                         <label class="form-label" for="customPeriodTo">직접 지정 종료일</label>
                         <input class="form-control" id="customPeriodTo" type="date" name="customPeriodTo" value="%s">
                     </div>
@@ -666,6 +666,23 @@ final class WebController
                 select.addEventListener("change", syncPanels);
                 syncPanels();
             })();
+            (() => {
+                const radios = [...document.querySelectorAll("input[name=\'summaryPeriodType\']")];
+                const panels = [...document.querySelectorAll("[data-custom-period-panel]")];
+                const syncCustomPeriod = () => {
+                    const selected = radios.find((radio) => radio.checked)?.value;
+                    const active = selected === "custom";
+                    panels.forEach((panel) => {
+                        panel.classList.toggle("d-none", !active);
+                        panel.querySelectorAll("input").forEach((input) => {
+                            input.disabled = !active;
+                            input.required = active;
+                        });
+                    });
+                };
+                radios.forEach((radio) => radio.addEventListener("change", syncCustomPeriod));
+                syncCustomPeriod();
+            })();
             </script>',
             CsrfService::input(),
             $channel === 'telegram' ? ' selected' : '',
@@ -673,7 +690,9 @@ final class WebController
             $this->dayOptions($monthlySendDay),
             $isActive ? ' checked' : '',
             $this->summaryPeriodOptions($summaryPeriodType),
+            $summaryPeriodType === 'custom' ? '' : ' d-none',
             $this->h($customPeriodFrom),
+            $summaryPeriodType === 'custom' ? '' : ' d-none',
             $this->h($customPeriodTo),
             $channel === 'telegram' ? '' : ' d-none',
             $this->h($this->secretPlaceholder($setting['telegram_bot_token'] ?? null, 'Bot token')),

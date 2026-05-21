@@ -30,6 +30,70 @@ final class DiscordService
             ];
         }
 
+        if (function_exists('curl_init')) {
+            return $this->sendWithCurl($webhookUrl, $payload);
+        }
+
+        return $this->sendWithStream($webhookUrl, $payload);
+    }
+
+    /**
+     * @return array{sent: bool, skipped: bool, error: string|null}
+     */
+    private function sendWithCurl(string $webhookUrl, string $payload): array
+    {
+        $curl = curl_init($webhookUrl);
+
+        if ($curl === false) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => 'Discord cURL initialization failed.',
+            ];
+        }
+
+        curl_setopt_array($curl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 20,
+        ]);
+
+        $response = curl_exec($curl);
+        $statusCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($curl);
+        curl_close($curl);
+
+        if ($response === false) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => 'Discord cURL request failed: ' . ($curlError !== '' ? $curlError : 'unknown error'),
+            ];
+        }
+
+        if ($statusCode < 200 || $statusCode >= 300) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => sprintf('Discord webhook returned HTTP %d: %s', $statusCode, $this->responseSnippet((string)$response)),
+            ];
+        }
+
+        return [
+            'sent' => true,
+            'skipped' => false,
+            'error' => null,
+        ];
+    }
+
+    /**
+     * @return array{sent: bool, skipped: bool, error: string|null}
+     */
+    private function sendWithStream(string $webhookUrl, string $payload): array
+    {
         $context = stream_context_create([
             'http' => [
                 'method' => 'POST',
@@ -39,7 +103,6 @@ final class DiscordService
                 'ignore_errors' => true,
             ],
         ]);
-
         $response = @file_get_contents($webhookUrl, false, $context);
         $statusLine = $http_response_header[0] ?? '';
 
@@ -47,7 +110,7 @@ final class DiscordService
             return [
                 'sent' => false,
                 'skipped' => false,
-                'error' => 'Discord request failed.',
+                'error' => 'Discord stream request failed. allow_url_fopen may be disabled.',
             ];
         }
 
@@ -55,7 +118,7 @@ final class DiscordService
             return [
                 'sent' => false,
                 'skipped' => false,
-                'error' => 'Discord webhook returned an error.',
+                'error' => 'Discord webhook returned an error: ' . (string)$statusLine . ' ' . $this->responseSnippet((string)$response),
             ];
         }
 
@@ -64,5 +127,16 @@ final class DiscordService
             'skipped' => false,
             'error' => null,
         ];
+    }
+
+    private function responseSnippet(string $response): string
+    {
+        $response = trim($response);
+
+        if ($response === '') {
+            return 'empty response';
+        }
+
+        return mb_substr($response, 0, 300);
     }
 }
