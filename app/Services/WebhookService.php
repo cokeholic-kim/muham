@@ -15,6 +15,8 @@ final class WebhookService
     public function __construct(
         private readonly AuditLogService $auditLogService,
         private readonly TelegramService $telegramService,
+        private readonly DiscordService $discordService,
+        private readonly NotificationSettingService $notificationSettingService,
         /** @var array<string, string|null> */
         private readonly array $requestContext
     ) {
@@ -26,6 +28,10 @@ final class WebhookService
      */
     public function handleWorkSummary(array $payload, string $sourceIp, ?string $secret): array
     {
+        if (!isset($payload['userId']) && !isset($payload['from']) && !isset($payload['to'])) {
+            return $this->handleScheduledDispatch($payload, $sourceIp, $secret);
+        }
+
         $requestId = $this->stringValue($payload, 'requestId', 120);
         $periodFrom = $this->dateValue($payload['from'] ?? null, 'from');
         $periodTo = $this->dateValue($payload['to'] ?? null, 'to');
@@ -120,6 +126,168 @@ final class WebhookService
                 'telegram' => $telegramResult,
             ];
         });
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function handleScheduledDispatch(array $payload, string $sourceIp, ?string $secret): array
+    {
+        $triggerDate = isset($payload['triggerDate'])
+            ? $this->dateValue($payload['triggerDate'], 'triggerDate')
+            : date('Y-m-d');
+        $requestId = $this->optionalStringValue($payload, 'requestId', 120)
+            ?? 'scheduled-work-summary-' . $triggerDate;
+
+        if (!$this->isAllowedIp($sourceIp)) {
+            return $this->reject($payload, $requestId, $sourceIp, null, null, '허용되지 않은 IP입니다.');
+        }
+
+        if (!$this->isActivePeriod(date('Y-m-d'))) {
+            return $this->reject($payload, $requestId, $sourceIp, null, null, '웹훅 유효 기간이 아닙니다.');
+        }
+
+        if (!hash_equals(Env::required('WEBHOOK_SHARED_SECRET'), (string)$secret)) {
+            return $this->reject($payload, $requestId, $sourceIp, null, null, '웹훅 secret이 올바르지 않습니다.');
+        }
+
+        if ($this->requestExists($requestId)) {
+            $this->auditLogService->record(
+                null,
+                null,
+                'webhook_rejected',
+                'webhook_event',
+                null,
+                null,
+                [
+                    'request_id' => $requestId,
+                    'reason' => '이미 처리된 requestId입니다.',
+                    'source_ip' => $sourceIp,
+                    'trigger_date' => $triggerDate,
+                ],
+                $this->requestContext
+            );
+
+            return [
+                'result' => 'rejected',
+                'message' => '이미 처리된 requestId입니다.',
+                'requestId' => $requestId,
+            ];
+        }
+
+        return Database::transaction(function (PDO $pdo) use ($payload, $requestId, $sourceIp, $triggerDate): array {
+            $this->assertRequestIdIsNew($pdo, $requestId);
+            $settings = $this->notificationSettingService->dueForDate($triggerDate);
+            $deliveries = [];
+            $sentCount = 0;
+            $failedCount = 0;
+            $skippedCount = 0;
+
+            foreach ($settings as $setting) {
+                [$periodFrom, $periodTo] = $this->notificationSettingService->resolvePeriod($setting, $triggerDate);
+                $summary = $this->summary($pdo, (int)$setting['user_id'], $periodFrom, $periodTo);
+                $message = $this->message($summary);
+                $delivery = $this->sendBySetting($setting, $message);
+
+                if ($delivery['sent']) {
+                    $sentCount++;
+                } elseif ($delivery['skipped']) {
+                    $skippedCount++;
+                } else {
+                    $failedCount++;
+                }
+
+                $deliveries[] = [
+                    'setting_id' => (int)$setting['id'],
+                    'user_id' => (int)$setting['user_id'],
+                    'channel' => (string)$setting['channel'],
+                    'summary_period_type' => (string)$setting['summary_period_type'],
+                    'period_from' => $periodFrom,
+                    'period_to' => $periodTo,
+                    'sent' => $delivery['sent'],
+                    'skipped' => $delivery['skipped'],
+                    'error' => $delivery['error'],
+                    'summary' => $summary,
+                ];
+            }
+
+            $result = $failedCount > 0 ? 'failed' : 'success';
+            $errorMessage = $failedCount > 0
+                ? sprintf('%d개 정기 발송에 실패했습니다.', $failedCount)
+                : null;
+
+            $this->insertWebhookEvent(
+                $pdo,
+                $requestId,
+                $sourceIp,
+                true,
+                null,
+                null,
+                $payload + ['triggerDate' => $triggerDate],
+                $result,
+                $errorMessage
+            );
+
+            $auditAfter = [
+                'request_id' => $requestId,
+                'trigger_date' => $triggerDate,
+                'result' => $result,
+                'due_count' => count($settings),
+                'sent_count' => $sentCount,
+                'failed_count' => $failedCount,
+                'skipped_count' => $skippedCount,
+                'deliveries' => $deliveries,
+            ];
+            $this->auditLogService->recordInTransaction(
+                $pdo,
+                null,
+                null,
+                'webhook_scheduled_summary',
+                'webhook_event',
+                null,
+                null,
+                $auditAfter,
+                $this->requestContext
+            );
+
+            return [
+                'result' => $result,
+                'message' => sprintf('정기 발송 대상 %d건을 처리했습니다.', count($settings)),
+                'requestId' => $requestId,
+                'triggerDate' => $triggerDate,
+                'dueCount' => count($settings),
+                'sentCount' => $sentCount,
+                'failedCount' => $failedCount,
+                'skippedCount' => $skippedCount,
+                'deliveries' => $deliveries,
+            ];
+        });
+    }
+
+    /**
+     * @param array<string, mixed> $setting
+     * @return array{sent: bool, skipped: bool, error: string|null}
+     */
+    private function sendBySetting(array $setting, string $message): array
+    {
+        if ($setting['channel'] === 'telegram') {
+            return $this->telegramService->sendMessage(
+                $message,
+                isset($setting['telegram_chat_id']) ? (string)$setting['telegram_chat_id'] : null,
+                isset($setting['telegram_bot_token']) ? (string)$setting['telegram_bot_token'] : null
+            );
+        }
+
+        if ($setting['channel'] === 'discord') {
+            return $this->discordService->sendMessage((string)$setting['discord_webhook_url'], $message);
+        }
+
+        return [
+            'sent' => false,
+            'skipped' => true,
+            'error' => 'Unsupported notification channel.',
+        ];
     }
 
     /**
@@ -327,6 +495,27 @@ final class WebhookService
 
         if (!is_string($value) || trim($value) === '') {
             throw new InvalidArgumentException(sprintf('%s 값이 필요합니다.', $key));
+        }
+
+        $value = trim($value);
+
+        if (strlen($value) > $maxLength) {
+            throw new InvalidArgumentException(sprintf('%s는 %d자 이하여야 합니다.', $key, $maxLength));
+        }
+
+        return $value;
+    }
+
+    private function optionalStringValue(array $payload, string $key, int $maxLength): ?string
+    {
+        $value = $payload[$key] ?? null;
+
+        if ($value === null) {
+            return null;
+        }
+
+        if (!is_string($value) || trim($value) === '') {
+            throw new InvalidArgumentException(sprintf('%s 값이 올바르지 않습니다.', $key));
         }
 
         $value = trim($value);

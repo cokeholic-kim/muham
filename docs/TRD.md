@@ -125,9 +125,13 @@ docker compose down -v
 - `/login`: 로그인 화면
 - `/signup`: 회원가입 화면
 - `/logout`: 로그아웃 POST
-- `/work-entries`: 근무시간 입력, 기간 조회, 요약, 목록 화면
+- `/work-entries`: 최근 근무 기록 10건과 입력/조회 진입점
+- `/work-entries/create`: 근무시간 입력 화면
+- `/work-entries/import`: 정규 포맷 또는 AI 변환 기반 근무시간 일괄 입력 화면
+- `/work-entries/search`: 기간 조회, 요약, 목록 화면
 - `/work-entries/:id/edit`: 근무 기록 수정 화면
 - `/work-entries/:id/delete`: 근무 기록 soft delete POST
+- `/notification-settings`: 정기 발송 설정 화면
 - `/health`: 개발용 환경 점검 화면
 - `/index.html`: 기존 AI 근무시간 파서
 
@@ -144,11 +148,11 @@ DB_HOST=mysql
 DB_PORT=3306
 DB_DATABASE=muham_worktime
 DB_USERNAME=muham
-DB_PASSWORD=muham_password
+DB_PASSWORD=change-this-db-password
 DB_CHARSET=utf8mb4
 
 MYSQL_PORT=3307
-MYSQL_ROOT_PASSWORD=root_password
+MYSQL_ROOT_PASSWORD=change-this-root-password
 
 SESSION_SECRET=change-this-local-secret
 WEBHOOK_SHARED_SECRET=change-this-webhook-secret
@@ -284,6 +288,54 @@ TELEGRAM_DEFAULT_CHAT_ID=
 | error_message | 실패 사유 |
 | created_at | 요청 시각 |
 
+### webhook_request_logs
+
+| 필드 | 설명 |
+| --- | --- |
+| id | 웹훅 수신 로그 ID |
+| request_id | payload의 요청 ID. 없으면 NULL |
+| path | 요청 경로 |
+| method | 요청 method |
+| source_ip | 요청 IP |
+| headers_json | 민감 헤더를 제외한 요청 헤더 |
+| body_sha256 | 요청 본문 SHA-256 |
+| raw_body | 요청 본문 원문. 추적용으로 저장 |
+| payload_json | JSON 파싱이 성공한 payload |
+| parse_status | `parsed`, `empty`, `invalid_json` |
+| error_message | 파싱 오류 메시지 |
+| created_at | 수신 시각 |
+
+### notification_settings
+
+| 필드 | 설명 |
+| --- | --- |
+| id | 정기 발송 설정 ID |
+| user_id | 설정 소유 사용자 ID |
+| channel | `telegram`, `discord` |
+| telegram_bot_token | Telegram Bot token |
+| telegram_chat_id | Telegram Chat ID |
+| discord_webhook_url | Discord Webhook URL |
+| summary_period_type | 요약 기간 기준. `previous_month`, `current_month`, `previous_7_days`, `custom` |
+| custom_period_from | 직접 지정 시작일. `summary_period_type=custom`일 때 사용 |
+| custom_period_to | 직접 지정 종료일. `summary_period_type=custom`일 때 사용 |
+| monthly_send_day | 매월 발송일 |
+| is_active | 활성 여부 |
+| created_at | 생성 시각 |
+| updated_at | 수정 시각 |
+
+### user_ai_settings
+
+| 필드 | 설명 |
+| --- | --- |
+| id | AI 설정 ID |
+| user_id | 설정 소유 사용자 ID |
+| provider | `gemini`, `openai`, `anthropic` |
+| model | 사용할 AI 모델 |
+| api_key_ciphertext | 암호화된 API Key |
+| api_key_hint | 화면 표시용 마스킹 힌트 |
+| created_at | 생성 시각 |
+| updated_at | 수정 시각 |
+
 ## 10. API 설계
 
 ### 인증
@@ -310,19 +362,28 @@ TELEGRAM_DEFAULT_CHAT_ID=
 - 동일 사용자의 겹치는 `active` 근무 시간대는 등록할 수 없습니다.
 - 수정 시 `version`을 증가시키고, 삭제는 `status=deleted`, `deleted_at`을 기록하는 soft delete로 처리합니다.
 - 생성/수정/삭제는 `AuditLogService::recordInTransaction()`으로 감사 로그와 같은 트랜잭션에서 처리합니다.
+- `/work-entries/import` 화면에서 정규 포맷 또는 AI 변환 결과를 미리보기한 뒤 `WorkEntryService::bulkCreate()`로 일괄 저장합니다.
+- 사용자 AI API Key는 `user_ai_settings`에 암호화해 저장하고, 화면에는 마스킹 힌트만 표시합니다.
 
 ### 웹훅
 
-- `POST /api/webhooks/work-summary` 근무시간 요약 텔레그램 발송
+- `POST /api/webhooks/work-summary` 근무시간 요약 발송
 
 현재 구현:
 
 - `App\Controllers\WebhookController`에서 `POST /api/webhooks/work-summary` 요청을 처리합니다.
+- `App\Services\WebhookRequestLogService`에서 웹훅 수신 요청을 `webhook_request_logs`에 먼저 기록합니다.
+- JSON 파싱 실패 요청도 `webhook_request_logs.parse_status=invalid_json`으로 남깁니다.
 - `App\Services\WebhookService`에서 IP allowlist, 유효 기간, shared secret, `requestId` 중복 방지, 기간별 근무 요약 생성을 처리합니다.
+- `userId/from/to` payload는 기존 단건 Telegram 발송 경로로 처리합니다.
+- `triggerDate/requestId` payload는 정기 발송 실행 신호로 처리하고, 해당 일자에 발송해야 하는 활성 설정을 조회합니다.
+- 정기 발송 요약 기간은 설정의 `summary_period_type` 기준으로 실행 시점에 계산합니다.
 - `App\Services\TelegramService`에서 Telegram Bot API `sendMessage`를 호출합니다.
+- `App\Services\DiscordService`에서 Discord Webhook URL로 메시지를 전송합니다.
+- `App\Services\NotificationSettingService`에서 사용자별 정기 발송 설정을 저장하고 조회합니다.
 - shared secret은 `X-Webhook-Secret` 헤더 또는 `Authorization: Bearer ...`로 전달합니다.
-- 웹훅 결과는 `webhook_events`에 `success`, `rejected`, `failed`로 저장합니다.
-- 웹훅 요약과 거부 결과는 `audit_logs`에 `webhook_summary`, `webhook_rejected`로 기록합니다.
+- 웹훅 수신 로그는 `webhook_request_logs`, 처리 결과는 `webhook_events`에 `success`, `rejected`, `failed`로 저장합니다.
+- 웹훅 요약, 정기 발송, 거부 결과는 `audit_logs`에 `webhook_summary`, `webhook_scheduled_summary`, `webhook_rejected`로 기록합니다.
 - 텔레그램 토큰 또는 chat id가 없으면 요약은 생성하고 발송 실패/스킵 상태를 기록합니다.
 
 ## 11. 웹훅 처리 흐름
@@ -331,10 +392,13 @@ TELEGRAM_DEFAULT_CHAT_ID=
 2. 요청 시간이 허용 기간 안인지 확인합니다.
 3. shared secret을 검증합니다.
 4. `requestId`로 중복 요청 여부를 확인합니다.
-5. 대상 사용자의 지정 기간 근무 기록을 조회합니다.
-6. 총 근무시간, 휴게시간, 실제 근무시간, 변경 건수를 계산합니다.
-7. 텔레그램 Bot API로 메시지를 전송합니다.
-8. 성공 또는 실패 결과를 `webhook_events`와 `audit_logs`에 기록합니다.
+5. 단건 payload이면 대상 사용자의 지정 기간 근무 기록을 조회합니다.
+6. 정기 실행 payload이면 `triggerDate`의 일(day)과 `monthly_send_day`가 같은 활성 설정을 조회합니다.
+7. 각 설정의 요약 기간 기준으로 조회 기간을 계산합니다.
+8. 계산된 기간의 근무 기록을 조회합니다.
+9. 총 근무시간, 휴게시간, 실제 근무시간을 계산합니다.
+10. 설정된 채널에 따라 Telegram 또는 Discord로 메시지를 전송합니다.
+11. 성공 또는 실패 결과를 `webhook_events`와 `audit_logs`에 기록합니다.
 
 ## 12. 시간대 정책
 

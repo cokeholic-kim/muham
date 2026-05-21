@@ -10,9 +10,11 @@ final class TelegramService
     /**
      * @return array{sent: bool, skipped: bool, error: string|null}
      */
-    public function sendMessage(string $message, ?string $chatId = null): array
+    public function sendMessage(string $message, ?string $chatId = null, ?string $botToken = null): array
     {
-        $token = Env::get('TELEGRAM_BOT_TOKEN');
+        $token = $botToken !== null && trim($botToken) !== ''
+            ? trim($botToken)
+            : Env::get('TELEGRAM_BOT_TOKEN');
         $chatId = $chatId !== null && trim($chatId) !== ''
             ? trim($chatId)
             : Env::get('TELEGRAM_DEFAULT_CHAT_ID');

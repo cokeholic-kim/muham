@@ -99,6 +99,108 @@ final class WorkEntryService
 
     /**
      * @param array<string, mixed> $actor
+     * @param array<int, array<string, mixed>> $payloads
+     * @return array<int, array<string, mixed>>
+     */
+    public function bulkCreate(array $actor, array $payloads): array
+    {
+        if ($payloads === []) {
+            throw new InvalidArgumentException('저장할 근무 기록이 없습니다.');
+        }
+
+        if (count($payloads) > 100) {
+            throw new InvalidArgumentException('한 번에 저장할 수 있는 근무 기록은 최대 100건입니다.');
+        }
+
+        $actorId = (int)$actor['id'];
+        $role = (string)$actor['role'];
+        $targetUserId = $this->resolveTargetUserId($actor, null);
+        $entries = array_map(
+            fn (array $payload): array => $this->buildEntryData($payload, $targetUserId),
+            $payloads
+        );
+
+        usort($entries, fn (array $a, array $b): int => strcmp((string)$a['start_at'], (string)$b['start_at']));
+        $this->assertNoInternalOverlap($entries);
+
+        return Database::transaction(function (PDO $pdo) use ($actorId, $role, $targetUserId, $entries): array {
+            $createdEntries = [];
+
+            foreach ($entries as $entry) {
+                $this->assertNoOverlap($pdo, $targetUserId, $entry['start_at'], $entry['end_at']);
+
+                $statement = $pdo->prepare(
+                    'INSERT INTO work_entries (
+                        user_id,
+                        work_date,
+                        start_at,
+                        end_at,
+                        break_minutes,
+                        work_minutes,
+                        memo,
+                        status,
+                        version,
+                        created_by,
+                        updated_by
+                    ) VALUES (
+                        :user_id,
+                        :work_date,
+                        :start_at,
+                        :end_at,
+                        :break_minutes,
+                        :work_minutes,
+                        :memo,
+                        :status,
+                        :version,
+                        :created_by,
+                        :updated_by
+                    )'
+                );
+
+                $statement->execute([
+                    'user_id' => $targetUserId,
+                    'work_date' => $entry['work_date'],
+                    'start_at' => $entry['start_at'],
+                    'end_at' => $entry['end_at'],
+                    'break_minutes' => $entry['break_minutes'],
+                    'work_minutes' => $entry['work_minutes'],
+                    'memo' => $entry['memo'],
+                    'status' => 'active',
+                    'version' => 1,
+                    'created_by' => $actorId,
+                    'updated_by' => $actorId,
+                ]);
+
+                $created = $this->findByIdForActor($pdo, (int)$pdo->lastInsertId(), $actorId, $role);
+
+                if ($created === null) {
+                    throw new RuntimeException('생성된 근무 기록을 찾을 수 없습니다.');
+                }
+
+                $createdEntries[] = $created;
+            }
+
+            $this->auditLogService->recordInTransaction(
+                $pdo,
+                $actorId,
+                $targetUserId,
+                'bulk_import_work',
+                'work_entry',
+                null,
+                null,
+                [
+                    'count' => count($createdEntries),
+                    'entries' => $createdEntries,
+                ],
+                $this->requestContext
+            );
+
+            return $createdEntries;
+        });
+    }
+
+    /**
+     * @param array<string, mixed> $actor
      * @param array<string, mixed> $query
      * @return array<int, array<string, mixed>>
      */
@@ -135,6 +237,45 @@ final class WorkEntryService
                 'status' => 'active',
                 'from_date' => $from,
                 'to_date' => $to,
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $actor
+     * @return array<int, array<string, mixed>>
+     */
+    public function recent(array $actor, int $limit = 10): array
+    {
+        $targetUserId = $this->resolveTargetUserId($actor, null);
+        $limit = max(1, min(50, $limit));
+
+        return Database::fetchAll(
+            'SELECT
+                id,
+                user_id,
+                work_date,
+                start_at,
+                end_at,
+                break_minutes,
+                work_minutes,
+                memo,
+                status,
+                version,
+                created_by,
+                updated_by,
+                deleted_at,
+                created_at,
+                updated_at
+            FROM work_entries
+            WHERE user_id = :user_id
+              AND status = :status
+              AND deleted_at IS NULL
+            ORDER BY work_date DESC, start_at DESC, id DESC
+            LIMIT ' . $limit,
+            [
+                'user_id' => $targetUserId,
+                'status' => 'active',
             ]
         );
     }
@@ -412,6 +553,22 @@ final class WorkEntryService
 
         if ($statement->fetch(PDO::FETCH_ASSOC) !== false) {
             throw new RuntimeException('같은 시간대의 근무 기록이 이미 있습니다.');
+        }
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $entries
+     */
+    private function assertNoInternalOverlap(array $entries): void
+    {
+        $previous = null;
+
+        foreach ($entries as $entry) {
+            if ($previous !== null && (string)$previous['end_at'] > (string)$entry['start_at']) {
+                throw new RuntimeException('일괄 입력 목록 안에 겹치는 근무 시간이 있습니다.');
+            }
+
+            $previous = $entry;
         }
     }
 

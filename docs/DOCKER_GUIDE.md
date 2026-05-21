@@ -44,11 +44,11 @@ DB_HOST=mysql
 DB_PORT=3306
 DB_DATABASE=muham_worktime
 DB_USERNAME=muham
-DB_PASSWORD=muham_password
+DB_PASSWORD=change-this-db-password
 DB_CHARSET=utf8mb4
 
 MYSQL_PORT=3307
-MYSQL_ROOT_PASSWORD=root_password
+MYSQL_ROOT_PASSWORD=change-this-root-password
 ```
 
 `.env`는 민감 정보를 포함할 수 있으므로 git에 커밋하지 않습니다.
@@ -92,7 +92,7 @@ docker compose exec app php -m
 MySQL 접속 확인:
 
 ```bash
-docker compose exec mysql mysql -umuham -pmuham_password -D muham_worktime -e "SELECT VERSION();"
+docker compose exec mysql sh -lc 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" -D "$MYSQL_DATABASE" -e "SELECT VERSION();"'
 ```
 
 ## 로그 확인

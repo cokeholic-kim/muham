@@ -6,11 +6,16 @@ require_once __DIR__ . '/app/Services/CsrfService.php';
 require_once __DIR__ . '/app/Services/SessionService.php';
 require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
+require_once __DIR__ . '/app/Services/AiCredentialService.php';
 require_once __DIR__ . '/app/Services/AuditLogService.php';
 require_once __DIR__ . '/app/Services/AuthService.php';
+require_once __DIR__ . '/app/Services/DiscordService.php';
+require_once __DIR__ . '/app/Services/NotificationSettingService.php';
 require_once __DIR__ . '/app/Services/TelegramService.php';
+require_once __DIR__ . '/app/Services/WebhookRequestLogService.php';
 require_once __DIR__ . '/app/Services/WebhookService.php';
 require_once __DIR__ . '/app/Services/WorkEntryService.php';
+require_once __DIR__ . '/app/Services/WorkEntryImportService.php';
 require_once __DIR__ . '/app/Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/app/Controllers/AuthController.php';
 require_once __DIR__ . '/app/Controllers/WebhookController.php';
@@ -24,11 +29,16 @@ use App\Controllers\WorkEntryController;
 use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
+use App\Services\AiCredentialService;
 use App\Services\AuditLogService;
 use App\Services\AuthService;
+use App\Services\DiscordService;
+use App\Services\NotificationSettingService;
 use App\Services\TelegramService;
+use App\Services\WebhookRequestLogService;
 use App\Services\WebhookService;
 use App\Services\WorkEntryService;
+use App\Services\WorkEntryImportService;
 
 Env::load(__DIR__ . '/.env');
 date_default_timezone_set(Env::get('APP_TIMEZONE', 'Asia/Seoul'));
@@ -62,6 +72,24 @@ function readJsonPayload(): array
     $rawBody = file_get_contents('php://input');
 
     if ($rawBody === false || trim($rawBody) === '') {
+        return [];
+    }
+
+    $payload = json_decode($rawBody, true);
+
+    if (!is_array($payload)) {
+        throw new \InvalidArgumentException('유효한 JSON 요청 본문이 필요합니다.');
+    }
+
+    return $payload;
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function readJsonPayloadFromRaw(string $rawBody): array
+{
+    if (trim($rawBody) === '') {
         return [];
     }
 
@@ -149,13 +177,53 @@ if (str_starts_with($path, '/api/')) {
         $authMiddleware
     );
     $webhookController = new WebhookController(
-        new WebhookService($auditLogService, new TelegramService(), $requestContext)
+        new WebhookService(
+            $auditLogService,
+            new TelegramService(),
+            new DiscordService(),
+            new NotificationSettingService(),
+            $requestContext
+        )
     );
+    $webhookRequestLogService = new WebhookRequestLogService();
 
     try {
         $workEntryId = $path === '/api/work-entries/summary'
             ? null
             : WorkEntryController::routeId($path, '/api/work-entries/');
+
+        if ($routeMethod === 'POST' && $path === '/api/webhooks/work-summary') {
+            $rawBody = file_get_contents('php://input');
+            $rawBody = is_string($rawBody) ? $rawBody : '';
+
+            try {
+                $payload = readJsonPayloadFromRaw($rawBody);
+                $webhookRequestLogService->record(
+                    $path,
+                    $method,
+                    (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+                    $rawBody,
+                    $payload,
+                    trim($rawBody) === '' ? 'empty' : 'parsed',
+                    null
+                );
+            } catch (\InvalidArgumentException $e) {
+                $webhookRequestLogService->record(
+                    $path,
+                    $method,
+                    (string)($_SERVER['REMOTE_ADDR'] ?? ''),
+                    $rawBody,
+                    null,
+                    'invalid_json',
+                    $e->getMessage()
+                );
+                throw $e;
+            }
+
+            $result = $webhookController->workSummary($payload);
+            jsonResponse($result['body'], $result['status']);
+        }
+
         $result = match ([$routeMethod, $path]) {
             ['POST', '/api/auth/signup'] => $authController->signup(readJsonPayload()),
             ['POST', '/api/auth/login'] => $authController->login(readJsonPayload()),
@@ -164,7 +232,6 @@ if (str_starts_with($path, '/api/')) {
             ['POST', '/api/work-entries'] => $workEntryController->create(readJsonPayload()),
             ['GET', '/api/work-entries'] => $workEntryController->list($_GET),
             ['GET', '/api/work-entries/summary'] => $workEntryController->summary($_GET),
-            ['POST', '/api/webhooks/work-summary'] => $webhookController->workSummary(readJsonPayload()),
             default => null,
         };
 
@@ -209,10 +276,15 @@ $authService = new AuthService();
 $auditLogService = new AuditLogService();
 $authMiddleware = new AuthMiddleware($authService);
 $requestContext = requestContext();
+$aiCredentialService = new AiCredentialService();
 $webController = new WebController(
     new AuthController($authService, $authMiddleware, $auditLogService, $requestContext),
     $authMiddleware,
-    new WorkEntryService($auditLogService, $requestContext)
+    new WorkEntryService($auditLogService, $requestContext),
+    new WorkEntryImportService($aiCredentialService),
+    $aiCredentialService,
+    new NotificationSettingService(),
+    $auditLogService
 );
 
 if ($path === '/' && $routeMethod === 'GET') {
@@ -243,8 +315,36 @@ if ($path === '/logout' && $method === 'POST') {
     $webController->logout();
 }
 
+if ($path === '/notification-settings' && $routeMethod === 'GET') {
+    $webController->notificationSettingsForm();
+}
+
+if ($path === '/notification-settings' && $method === 'POST') {
+    $webController->saveNotificationSettings($_POST);
+}
+
 if ($path === '/work-entries' && $routeMethod === 'GET') {
     $webController->workEntries($_GET);
+}
+
+if ($path === '/work-entries/create' && $routeMethod === 'GET') {
+    $webController->createWorkEntryForm();
+}
+
+if ($path === '/work-entries/import' && $routeMethod === 'GET') {
+    $webController->importWorkEntriesForm();
+}
+
+if ($path === '/work-entries/import/preview' && $method === 'POST') {
+    $webController->previewWorkEntryImport($_POST);
+}
+
+if ($path === '/work-entries/import' && $method === 'POST') {
+    $webController->saveWorkEntryImport($_POST);
+}
+
+if ($path === '/work-entries/search' && $routeMethod === 'GET') {
+    $webController->searchWorkEntries($_GET);
 }
 
 if ($path === '/work-entries' && $method === 'POST') {
@@ -253,7 +353,7 @@ if ($path === '/work-entries' && $method === 'POST') {
 
 if (preg_match('#^/work-entries/([1-9][0-9]*)/edit$#', $path, $matches) === 1) {
     if ($routeMethod === 'GET') {
-        $webController->editWorkEntryForm((int)$matches[1]);
+        $webController->editWorkEntryForm((int)$matches[1], $_GET);
     }
 
     if ($method === 'POST') {
