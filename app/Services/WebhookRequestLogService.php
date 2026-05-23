@@ -18,10 +18,13 @@ final class WebhookRequestLogService
         string $rawBody,
         ?array $payload,
         string $parseStatus,
-        ?string $errorMessage
+        ?string $errorMessage,
+        bool $storeBody = true
     ): void {
         $headersJson = json_encode($this->safeHeaders(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $payloadJson = $payload === null ? null : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $payloadJson = $storeBody && $payload !== null
+            ? json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            : null;
 
         if ($headersJson === false || $payloadJson === false) {
             throw new RuntimeException('웹훅 요청 로그 JSON 인코딩에 실패했습니다.');
@@ -58,7 +61,7 @@ final class WebhookRequestLogService
                 'source_ip' => $sourceIp,
                 'headers_json' => $headersJson,
                 'body_sha256' => hash('sha256', $rawBody),
-                'raw_body' => $rawBody === '' ? null : substr($rawBody, 0, 65535),
+                'raw_body' => $storeBody && $rawBody !== '' ? substr($rawBody, 0, 65535) : null,
                 'payload_json' => $payloadJson,
                 'parse_status' => $parseStatus,
                 'error_message' => $errorMessage,

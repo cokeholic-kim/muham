@@ -6,7 +6,8 @@ require_once __DIR__ . '/app/Services/CsrfService.php';
 require_once __DIR__ . '/app/Services/SessionService.php';
 require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
-require_once __DIR__ . '/app/Services/AiCredentialService.php';
+require_once __DIR__ . '/app/Services/AdminAiUserService.php';
+require_once __DIR__ . '/app/Services/AiUsageService.php';
 require_once __DIR__ . '/app/Services/AuditLogService.php';
 require_once __DIR__ . '/app/Services/AuthService.php';
 require_once __DIR__ . '/app/Services/DiscordService.php';
@@ -20,18 +21,17 @@ require_once __DIR__ . '/app/Services/WorkEntryImportService.php';
 require_once __DIR__ . '/app/Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/app/Controllers/AuthController.php';
 require_once __DIR__ . '/app/Controllers/WebhookController.php';
-require_once __DIR__ . '/app/Controllers/WorkEntryController.php';
 require_once __DIR__ . '/app/Controllers/WebController.php';
 
 use App\Controllers\AuthController;
 use App\Controllers\WebController;
 use App\Controllers\WebhookController;
-use App\Controllers\WorkEntryController;
 use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
-use App\Services\AiCredentialService;
+use App\Services\AdminAiUserService;
 use App\Services\AuditLogService;
+use App\Services\AiUsageService;
 use App\Services\AuthService;
 use App\Services\DiscordService;
 use App\Services\LoginAttemptService;
@@ -64,26 +64,11 @@ function securityHeaders(): void
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: same-origin');
     header("Permissions-Policy: camera=(), microphone=(), geolocation=()");
-}
+    header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
 
-/**
- * @return array<string, mixed>
- */
-function readJsonPayload(): array
-{
-    $rawBody = file_get_contents('php://input');
-
-    if ($rawBody === false || trim($rawBody) === '') {
-        return [];
+    if (Env::get('APP_ENV') === 'production') {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
     }
-
-    $payload = json_decode($rawBody, true);
-
-    if (!is_array($payload)) {
-        throw new \InvalidArgumentException('유효한 JSON 요청 본문이 필요합니다.');
-    }
-
-    return $payload;
 }
 
 /**
@@ -171,22 +156,8 @@ function requestContext(): array
 }
 
 if (str_starts_with($path, '/api/')) {
-    $authService = new AuthService();
     $auditLogService = new AuditLogService();
-    $loginAttemptService = new LoginAttemptService();
-    $authMiddleware = new AuthMiddleware($authService);
     $requestContext = requestContext();
-    $authController = new AuthController(
-        $authService,
-        $authMiddleware,
-        $auditLogService,
-        $loginAttemptService,
-        $requestContext
-    );
-    $workEntryController = new WorkEntryController(
-        new WorkEntryService($auditLogService, $requestContext),
-        $authMiddleware
-    );
     $webhookController = new WebhookController(
         new WebhookService(
             $auditLogService,
@@ -199,10 +170,6 @@ if (str_starts_with($path, '/api/')) {
     $webhookRequestLogService = new WebhookRequestLogService();
 
     try {
-        $workEntryId = $path === '/api/work-entries/summary'
-            ? null
-            : WorkEntryController::routeId($path, '/api/work-entries/');
-
         if ($routeMethod === 'POST' && $path === '/api/webhooks/work-summary') {
             $rawBody = file_get_contents('php://input');
             $rawBody = is_string($rawBody) ? $rawBody : '';
@@ -216,7 +183,8 @@ if (str_starts_with($path, '/api/')) {
                     $rawBody,
                     $payload,
                     trim($rawBody) === '' ? 'empty' : 'parsed',
-                    null
+                    null,
+                    false
                 );
             } catch (\InvalidArgumentException $e) {
                 $webhookRequestLogService->record(
@@ -226,7 +194,8 @@ if (str_starts_with($path, '/api/')) {
                     $rawBody,
                     null,
                     'invalid_json',
-                    $e->getMessage()
+                    $e->getMessage(),
+                    false
                 );
                 throw $e;
             }
@@ -235,30 +204,7 @@ if (str_starts_with($path, '/api/')) {
             jsonResponse($result['body'], $result['status']);
         }
 
-        $result = match ([$routeMethod, $path]) {
-            ['POST', '/api/auth/signup'] => $authController->signup(readJsonPayload()),
-            ['POST', '/api/auth/login'] => $authController->login(readJsonPayload()),
-            ['POST', '/api/auth/logout'] => $authController->logout(),
-            ['GET', '/api/me'] => $authController->me(),
-            ['POST', '/api/work-entries'] => $workEntryController->create(readJsonPayload()),
-            ['GET', '/api/work-entries'] => $workEntryController->list($_GET),
-            ['GET', '/api/work-entries/summary'] => $workEntryController->summary($_GET),
-            default => null,
-        };
-
-        if ($result === null && $workEntryId !== null && $method === 'PATCH') {
-            $result = $workEntryController->update($workEntryId, readJsonPayload());
-        }
-
-        if ($result === null && $workEntryId !== null && $method === 'DELETE') {
-            $result = $workEntryController->delete($workEntryId);
-        }
-
-        if ($result === null) {
-            jsonResponse(['message' => 'Not Found'], 404);
-        }
-
-        jsonResponse($result['body'], $result['status']);
+        jsonResponse(['message' => 'Not Found'], 404);
     } catch (\InvalidArgumentException $e) {
         jsonResponse(['message' => $e->getMessage()], 422);
     } catch (\RuntimeException $e) {
@@ -275,6 +221,15 @@ if (str_starts_with($path, '/api/')) {
 }
 
 if ($path === '/health.json') {
+    if (Env::get('APP_ENV') === 'production' && SessionService::userId() === null) {
+        jsonResponse(['message' => 'Unauthorized'], 401);
+    }
+
+    if (Env::get('APP_ENV') === 'production') {
+        $checks = HealthCheck::run();
+        jsonResponse(['status' => $checks['status']]);
+    }
+
     jsonResponse(HealthCheck::run());
 }
 
@@ -288,15 +243,24 @@ $auditLogService = new AuditLogService();
 $loginAttemptService = new LoginAttemptService();
 $authMiddleware = new AuthMiddleware($authService);
 $requestContext = requestContext();
-$aiCredentialService = new AiCredentialService();
+$aiUsageService = new AiUsageService();
+$notificationSettingService = new NotificationSettingService();
+$webhookService = new WebhookService(
+    $auditLogService,
+    new TelegramService(),
+    new DiscordService(),
+    $notificationSettingService,
+    $requestContext
+);
 $webController = new WebController(
     new AuthController($authService, $authMiddleware, $auditLogService, $loginAttemptService, $requestContext),
     $authMiddleware,
     new WorkEntryService($auditLogService, $requestContext),
-    new WorkEntryImportService($aiCredentialService),
-    $aiCredentialService,
-    new NotificationSettingService(),
-    $auditLogService
+    new WorkEntryImportService($aiUsageService),
+    new AdminAiUserService(),
+    $notificationSettingService,
+    $auditLogService,
+    $webhookService
 );
 
 if ($path === '/' && $routeMethod === 'GET') {
@@ -305,6 +269,10 @@ if ($path === '/' && $routeMethod === 'GET') {
 
 if ($path === '/health' && $routeMethod === 'GET') {
     $webController->health();
+}
+
+if ($path === '/index.html' && $routeMethod === 'GET') {
+    $webController->aiParserPrototype();
 }
 
 if ($path === '/login' && $routeMethod === 'GET') {
@@ -327,12 +295,24 @@ if ($path === '/logout' && $method === 'POST') {
     $webController->logout();
 }
 
+if ($path === '/admin/ai-users' && $routeMethod === 'GET') {
+    $webController->adminAiUsers();
+}
+
+if (preg_match('#^/admin/ai-users/([1-9][0-9]*)$#', $path, $matches) === 1 && $method === 'POST') {
+    $webController->updateAdminAiUser((int)$matches[1], $_POST);
+}
+
 if ($path === '/notification-settings' && $routeMethod === 'GET') {
     $webController->notificationSettingsForm();
 }
 
 if ($path === '/notification-settings' && $method === 'POST') {
     $webController->saveNotificationSettings($_POST);
+}
+
+if ($path === '/notification-settings/send' && $method === 'POST') {
+    $webController->sendNotificationNow($_POST);
 }
 
 if ($path === '/work-entries' && $routeMethod === 'GET') {

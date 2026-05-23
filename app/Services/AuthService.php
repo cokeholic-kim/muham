@@ -70,7 +70,7 @@ final class AuthService
     public function findById(int $id): ?array
     {
         $user = Database::fetchOne(
-            'SELECT id, email, name, role, telegram_chat_id, created_at, updated_at FROM users WHERE id = :id',
+            'SELECT id, email, name, role, telegram_chat_id, ai_enabled, ai_daily_limit, created_at, updated_at FROM users WHERE id = :id',
             ['id' => $id]
         );
 
@@ -83,8 +83,8 @@ final class AuthService
     private function findByEmail(string $email, bool $includePasswordHash = false): ?array
     {
         $columns = $includePasswordHash
-            ? 'id, email, password_hash, name, role, telegram_chat_id, created_at, updated_at'
-            : 'id, email, name, role, telegram_chat_id, created_at, updated_at';
+            ? 'id, email, password_hash, name, role, telegram_chat_id, ai_enabled, ai_daily_limit, created_at, updated_at'
+            : 'id, email, name, role, telegram_chat_id, ai_enabled, ai_daily_limit, created_at, updated_at';
 
         $user = Database::fetchOne(
             sprintf('SELECT %s FROM users WHERE email = :email', $columns),
@@ -148,6 +148,8 @@ final class AuthService
         }
 
         $user['id'] = (int)$user['id'];
+        $user['ai_enabled'] = (int)($user['ai_enabled'] ?? 0);
+        $user['ai_daily_limit'] = (int)($user['ai_daily_limit'] ?? 0);
 
         return $user;
     }

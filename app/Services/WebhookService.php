@@ -12,6 +12,8 @@ use RuntimeException;
 
 final class WebhookService
 {
+    private const MANUAL_DISPATCH_LIMIT = 3;
+
     public function __construct(
         private readonly AuditLogService $auditLogService,
         private readonly TelegramService $telegramService,
@@ -126,6 +128,130 @@ final class WebhookService
                 'telegram' => $telegramResult,
             ];
         });
+    }
+
+    /**
+     * @param array<string, mixed> $user
+     * @return array<string, mixed>
+     */
+    public function dispatchManualNotification(array $user): array
+    {
+        $userId = (int)$user['id'];
+        $setting = $this->notificationSettingService->findForUser($user);
+
+        if ($setting === null) {
+            return [
+                'result' => 'skipped',
+                'message' => '정기 발송 설정을 먼저 저장해야 합니다.',
+            ];
+        }
+
+        if ((int)$setting['is_active'] !== 1) {
+            return [
+                'result' => 'skipped',
+                'message' => '정기 발송 설정이 비활성화되어 있습니다.',
+            ];
+        }
+
+        $prepared = Database::transaction(function (PDO $pdo) use ($userId, $setting): array {
+            $this->lockNotificationSetting($pdo, $userId, (int)$setting['id']);
+
+            if ($this->manualDispatchCount($pdo, $userId) >= self::MANUAL_DISPATCH_LIMIT) {
+                $this->insertNotificationDispatchLog(
+                    $pdo,
+                    $userId,
+                    (int)$setting['id'],
+                    null,
+                    null,
+                    (string)$setting['channel'],
+                    'rate_limited',
+                    '1시간 내 수동 발송 횟수를 초과했습니다.'
+                );
+                $this->auditLogService->recordInTransaction(
+                    $pdo,
+                    $userId,
+                    $userId,
+                    'manual_notification_rate_limited',
+                    'notification_dispatch',
+                    (int)$setting['id'],
+                    null,
+                    [
+                        'limit' => self::MANUAL_DISPATCH_LIMIT,
+                        'window_minutes' => 60,
+                        'channel' => (string)$setting['channel'],
+                    ],
+                    $this->requestContext
+                );
+
+                return [
+                    'result' => 'rate_limited',
+                    'message' => '수동 발송은 사용자별 1시간에 3회까지만 가능합니다.',
+                ];
+            }
+
+            [$periodFrom, $periodTo] = $this->notificationSettingService->resolvePeriod($setting, date('Y-m-d'));
+            $summary = $this->summary($pdo, $userId, $periodFrom, $periodTo);
+            $message = $this->message($summary);
+            $logId = $this->insertNotificationDispatchLog(
+                $pdo,
+                $userId,
+                (int)$setting['id'],
+                $periodFrom,
+                $periodTo,
+                (string)$setting['channel'],
+                'pending',
+                null
+            );
+
+            return [
+                'result' => 'pending',
+                'logId' => $logId,
+                'setting' => $setting,
+                'summary' => $summary,
+                'messageText' => $message,
+                'periodFrom' => $periodFrom,
+                'periodTo' => $periodTo,
+            ];
+        });
+
+        if (($prepared['result'] ?? '') !== 'pending') {
+            return $prepared;
+        }
+
+        $delivery = $this->sendBySetting($prepared['setting'], (string)$prepared['messageText']);
+        $result = $delivery['sent'] ? 'success' : ($delivery['skipped'] ? 'skipped' : 'failed');
+
+        Database::transaction(function (PDO $pdo) use ($userId, $prepared, $delivery, $result): void {
+            $this->updateNotificationDispatchLog($pdo, (int)$prepared['logId'], $result, $delivery['error']);
+            $this->auditLogService->recordInTransaction(
+                $pdo,
+                $userId,
+                $userId,
+                'manual_notification_summary',
+                'notification_dispatch',
+                (int)$prepared['logId'],
+                null,
+                [
+                    'result' => $result,
+                    'channel' => (string)$prepared['setting']['channel'],
+                    'period_from' => (string)$prepared['periodFrom'],
+                    'period_to' => (string)$prepared['periodTo'],
+                    'sent' => $delivery['sent'],
+                    'skipped' => $delivery['skipped'],
+                    'error' => $delivery['error'],
+                    'summary' => $prepared['summary'],
+                ],
+                $this->requestContext
+            );
+        });
+
+        return [
+            'result' => $result,
+            'message' => $this->manualDispatchMessage($result),
+            'periodFrom' => (string)$prepared['periodFrom'],
+            'periodTo' => (string)$prepared['periodTo'],
+            'delivery' => $delivery,
+        ];
     }
 
     /**
@@ -288,6 +414,122 @@ final class WebhookService
             'skipped' => true,
             'error' => 'Unsupported notification channel.',
         ];
+    }
+
+    private function lockNotificationSetting(PDO $pdo, int $userId, int $settingId): void
+    {
+        $statement = $pdo->prepare(
+            'SELECT id
+            FROM notification_settings
+            WHERE id = :id
+              AND user_id = :user_id
+            LIMIT 1
+            FOR UPDATE'
+        );
+        $statement->execute([
+            'id' => $settingId,
+            'user_id' => $userId,
+        ]);
+
+        if ($statement->fetch(PDO::FETCH_ASSOC) === false) {
+            throw new RuntimeException('정기 발송 설정을 찾을 수 없습니다.');
+        }
+    }
+
+    private function manualDispatchCount(PDO $pdo, int $userId): int
+    {
+        $statement = $pdo->prepare(
+            'SELECT id
+            FROM notification_dispatch_logs
+            WHERE user_id = :user_id
+              AND trigger_type = :trigger_type
+              AND result IN (:pending, :success, :failed, :skipped)
+              AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+            FOR UPDATE'
+        );
+        $statement->execute([
+            'user_id' => $userId,
+            'trigger_type' => 'manual',
+            'pending' => 'pending',
+            'success' => 'success',
+            'failed' => 'failed',
+            'skipped' => 'skipped',
+        ]);
+
+        return count($statement->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    private function insertNotificationDispatchLog(
+        PDO $pdo,
+        int $userId,
+        int $settingId,
+        ?string $periodFrom,
+        ?string $periodTo,
+        string $channel,
+        string $result,
+        ?string $errorMessage
+    ): int {
+        $statement = $pdo->prepare(
+            'INSERT INTO notification_dispatch_logs (
+                user_id,
+                notification_setting_id,
+                trigger_type,
+                period_from,
+                period_to,
+                channel,
+                result,
+                error_message
+            ) VALUES (
+                :user_id,
+                :notification_setting_id,
+                :trigger_type,
+                :period_from,
+                :period_to,
+                :channel,
+                :result,
+                :error_message
+            )'
+        );
+        $statement->execute([
+            'user_id' => $userId,
+            'notification_setting_id' => $settingId,
+            'trigger_type' => 'manual',
+            'period_from' => $periodFrom,
+            'period_to' => $periodTo,
+            'channel' => $channel,
+            'result' => $result,
+            'error_message' => $errorMessage,
+        ]);
+
+        return (int)$pdo->lastInsertId();
+    }
+
+    private function updateNotificationDispatchLog(PDO $pdo, int $id, string $result, ?string $errorMessage): void
+    {
+        $statement = $pdo->prepare(
+            'UPDATE notification_dispatch_logs
+            SET result = :result,
+                error_message = :error_message
+            WHERE id = :id'
+        );
+        $statement->execute([
+            'id' => $id,
+            'result' => $result,
+            'error_message' => $errorMessage,
+        ]);
+    }
+
+    private function manualDispatchMessage(string $result): string
+    {
+        if ($result === 'success') {
+            return '근무 요약을 발송했습니다.';
+        }
+
+        if ($result === 'skipped') {
+            return '발송 설정이 부족해 메시지를 보내지 않았습니다.';
+        }
+
+        return '근무 요약은 생성했지만 메시지 발송에 실패했습니다.';
     }
 
     /**

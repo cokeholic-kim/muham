@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Config\Env;
 use App\Database\Database;
 use DateTimeImmutable;
 use InvalidArgumentException;
+use RuntimeException;
 
 final class NotificationSettingService
 {
@@ -102,9 +104,9 @@ final class NotificationSettingService
                 [
                     'user_id' => $userId,
                     'channel' => $channel,
-                    'telegram_bot_token' => $telegramBotToken,
-                    'telegram_chat_id' => $telegramChatId,
-                    'discord_webhook_url' => $discordWebhookUrl,
+                    'telegram_bot_token' => $channel === 'telegram' ? $this->encrypt($telegramBotToken) : null,
+                    'telegram_chat_id' => $channel === 'telegram' ? $this->encrypt($telegramChatId) : null,
+                    'discord_webhook_url' => $channel === 'discord' ? $this->encrypt($discordWebhookUrl) : null,
                     'summary_period_type' => $summaryPeriodType,
                     'custom_period_from' => $customPeriodFrom,
                     'custom_period_to' => $customPeriodTo,
@@ -128,9 +130,9 @@ final class NotificationSettingService
                 [
                     'user_id' => $userId,
                     'channel' => $channel,
-                    'telegram_bot_token' => $telegramBotToken,
-                    'telegram_chat_id' => $telegramChatId,
-                    'discord_webhook_url' => $discordWebhookUrl,
+                    'telegram_bot_token' => $channel === 'telegram' ? $this->encrypt($telegramBotToken) : null,
+                    'telegram_chat_id' => $channel === 'telegram' ? $this->encrypt($telegramChatId) : null,
+                    'discord_webhook_url' => $channel === 'discord' ? $this->encrypt($discordWebhookUrl) : null,
                     'summary_period_type' => $summaryPeriodType,
                     'custom_period_from' => $customPeriodFrom,
                     'custom_period_to' => $customPeriodTo,
@@ -306,6 +308,77 @@ final class NotificationSettingService
         return $url;
     }
 
+    private function encrypt(string $plainText): string
+    {
+        $iv = random_bytes(12);
+        $tag = '';
+        $cipherText = openssl_encrypt($plainText, 'aes-256-gcm', $this->encryptionKey(), OPENSSL_RAW_DATA, $iv, $tag);
+
+        if ($cipherText === false) {
+            throw new RuntimeException('알림 설정 암호화에 실패했습니다.');
+        }
+
+        $payload = json_encode([
+            'v' => 1,
+            'iv' => base64_encode($iv),
+            'tag' => base64_encode($tag),
+            'value' => base64_encode($cipherText),
+        ], JSON_UNESCAPED_SLASHES);
+
+        if ($payload === false) {
+            throw new RuntimeException('알림 설정 암호문 생성에 실패했습니다.');
+        }
+
+        return $payload;
+    }
+
+    private function decryptIfEncrypted(mixed $value): mixed
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return $value;
+        }
+
+        $data = json_decode($value, true);
+
+        if (!is_array($data) || !isset($data['iv'], $data['tag'], $data['value'])) {
+            return $value;
+        }
+
+        $cipherText = base64_decode((string)$data['value'], true);
+        $iv = base64_decode((string)$data['iv'], true);
+        $tag = base64_decode((string)$data['tag'], true);
+
+        if ($cipherText === false || $iv === false || $tag === false) {
+            throw new RuntimeException('알림 설정 암호문 형식이 올바르지 않습니다.');
+        }
+
+        $plainText = openssl_decrypt(
+            $cipherText,
+            'aes-256-gcm',
+            $this->encryptionKey(),
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag
+        );
+
+        if ($plainText === false) {
+            throw new RuntimeException('알림 설정 복호화에 실패했습니다.');
+        }
+
+        return $plainText;
+    }
+
+    private function encryptionKey(): string
+    {
+        $material = Env::get('APP_KEY');
+
+        if ($material === '') {
+            $material = Env::required('SESSION_SECRET');
+        }
+
+        return hash('sha256', $material, true);
+    }
+
     /**
      * @param array<string, mixed>|null $setting
      * @return array<string, mixed>|null
@@ -320,6 +393,9 @@ final class NotificationSettingService
         $setting['user_id'] = (int)$setting['user_id'];
         $setting['monthly_send_day'] = (int)$setting['monthly_send_day'];
         $setting['is_active'] = (int)$setting['is_active'];
+        $setting['telegram_bot_token'] = $this->decryptIfEncrypted($setting['telegram_bot_token'] ?? null);
+        $setting['telegram_chat_id'] = $this->decryptIfEncrypted($setting['telegram_chat_id'] ?? null);
+        $setting['discord_webhook_url'] = $this->decryptIfEncrypted($setting['discord_webhook_url'] ?? null);
         $setting['summary_period_type'] = is_string($setting['summary_period_type'] ?? null)
             ? $setting['summary_period_type']
             : 'previous_month';

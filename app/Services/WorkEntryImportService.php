@@ -6,12 +6,22 @@ namespace App\Services;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use RuntimeException;
+use Throwable;
 
 final class WorkEntryImportService
 {
     public function __construct(
-        private readonly AiCredentialService $aiCredentialService
+        private readonly AiUsageService $aiUsageService
     ) {
+    }
+
+    /**
+     * @param array<string, mixed> $user
+     * @return array<string, mixed>
+     */
+    public function aiStatus(array $user): array
+    {
+        return $this->aiUsageService->statusForUser($user);
     }
 
     /**
@@ -38,14 +48,22 @@ final class WorkEntryImportService
             throw new InvalidArgumentException('정규 포맷으로 해석할 수 있는 근무 시간이 없습니다.');
         }
 
-        $credentials = $this->aiCredentialService->credentialsForUser($user);
-        $raw = $this->parseByAi($text, $year, $credentials);
+        $reservation = $this->aiUsageService->reserveWorkEntryImport($user, $text);
 
-        return [
-            'source' => 'ai',
-            'entries' => $this->entriesFromAiResult($raw, $year),
-            'raw' => $raw,
-        ];
+        try {
+            $raw = $this->parseByAi($text, $year, $reservation);
+            $entries = $this->entriesFromAiResult($raw, $year);
+            $this->aiUsageService->markResult((int)$reservation['usageId'], 'success', null);
+
+            return [
+                'source' => 'ai',
+                'entries' => $entries,
+                'raw' => $raw,
+            ];
+        } catch (Throwable $e) {
+            $this->aiUsageService->markResult((int)$reservation['usageId'], 'failed', $e->getMessage());
+            throw $e;
+        }
     }
 
     /**

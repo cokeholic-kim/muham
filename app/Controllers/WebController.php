@@ -6,11 +6,12 @@ namespace App\Controllers;
 use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
-use App\Services\AiCredentialService;
+use App\Services\AdminAiUserService;
 use App\Services\AuditLogService;
 use App\Services\CsrfService;
 use App\Services\NotificationSettingService;
 use App\Services\SessionService;
+use App\Services\WebhookService;
 use App\Services\WorkEntryService;
 use App\Services\WorkEntryImportService;
 use InvalidArgumentException;
@@ -24,9 +25,10 @@ final class WebController
         private readonly AuthMiddleware $authMiddleware,
         private readonly WorkEntryService $workEntryService,
         private readonly WorkEntryImportService $workEntryImportService,
-        private readonly AiCredentialService $aiCredentialService,
+        private readonly AdminAiUserService $adminAiUserService,
         private readonly NotificationSettingService $notificationSettingService,
-        private readonly AuditLogService $auditLogService
+        private readonly AuditLogService $auditLogService,
+        private readonly WebhookService $webhookService
     ) {
     }
 
@@ -131,7 +133,7 @@ final class WebController
     public function importWorkEntriesForm(): never
     {
         $user = $this->requireWebUser();
-        $this->render('근무시간 일괄 입력', $this->importWorkEntriesPage($this->aiCredentialService->findForUser($user)));
+        $this->render('근무시간 일괄 입력', $this->importWorkEntriesPage($this->workEntryImportService->aiStatus($user)));
     }
 
     /**
@@ -190,10 +192,6 @@ final class WebController
         }
 
         try {
-            if (isset($payload['apiKey']) && is_string($payload['apiKey']) && trim($payload['apiKey']) !== '') {
-                $this->aiCredentialService->saveForUser($user, $payload);
-            }
-
             $result = $this->workEntryImportService->preview($user, $payload);
             $this->render('근무시간 일괄 입력 확인', $this->importPreviewPage($result['entries'], $result['source']));
         } catch (Throwable $e) {
@@ -286,6 +284,7 @@ final class WebController
 
     public function health(): never
     {
+        $this->requireWebUser();
         $checks = HealthCheck::run();
         $rows = '';
 
@@ -312,6 +311,26 @@ final class WebController
         );
 
         $this->render('환경 점검', $body);
+    }
+
+    public function aiParserPrototype(): never
+    {
+        $this->requireWebUser();
+        $path = dirname(__DIR__, 2) . '/index.html';
+
+        if (!is_file($path) || !is_readable($path)) {
+            http_response_code(404);
+            $this->securityHeaders();
+            header('Content-Type: text/plain; charset=utf-8');
+            echo 'Not Found';
+            exit;
+        }
+
+        http_response_code(200);
+        $this->securityHeaders();
+        header('Content-Type: text/html; charset=utf-8');
+        readfile($path);
+        exit;
     }
 
     public function notificationSettingsForm(): never
@@ -355,6 +374,87 @@ final class WebController
         $this->redirect('/notification-settings');
     }
 
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function sendNotificationNow(array $payload): never
+    {
+        $user = $this->requireWebUser();
+
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/notification-settings');
+        }
+
+        try {
+            $result = $this->webhookService->dispatchManualNotification($user);
+            $type = match ($result['result']) {
+                'success' => 'success',
+                'rate_limited', 'skipped' => 'warning',
+                default => 'danger',
+            };
+            $message = (string)$result['message'];
+
+            if (isset($result['periodFrom'], $result['periodTo'])) {
+                $message .= sprintf(' (%s ~ %s)', (string)$result['periodFrom'], (string)$result['periodTo']);
+            }
+
+            $this->flash($type, $message);
+        } catch (Throwable $e) {
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->redirect('/notification-settings');
+    }
+
+    public function adminAiUsers(): never
+    {
+        $this->requireAdminUser();
+
+        try {
+            $users = $this->adminAiUserService->listUsers();
+            $logs = $this->adminAiUserService->recentUsageLogs();
+        } catch (Throwable $e) {
+            $users = [];
+            $logs = [];
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->render('AI 사용자 관리', $this->adminAiUsersPage($users, $logs));
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function updateAdminAiUser(int $userId, array $payload): never
+    {
+        $admin = $this->requireAdminUser();
+
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/admin/ai-users');
+        }
+
+        try {
+            $change = $this->adminAiUserService->updateUserAccess($userId, $payload);
+            $this->auditLogService->record(
+                (int)$admin['id'],
+                $userId,
+                'update_user_ai_access',
+                'user',
+                $userId,
+                $this->userAiAccessForAudit($change['before']),
+                $this->userAiAccessForAudit($change['after']),
+                $this->requestContext()
+            );
+            $this->flash('success', 'AI 사용 권한을 저장했습니다.');
+        } catch (Throwable $e) {
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->redirect('/admin/ai-users');
+    }
+
     private function authPage(string $title, string $action, string $button, string $altText, string $altHref, string $altLabel): string
     {
         $nameField = $action === '/signup'
@@ -396,10 +496,14 @@ final class WebController
      */
     private function workEntriesHomePage(array $user, array $entries): string
     {
+        $adminAction = ($user['role'] ?? '') === 'admin'
+            ? '<a class="btn btn-outline-primary" href="/admin/ai-users">AI 사용자 관리</a>'
+            : '';
+
         return sprintf(
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
                 <div><h1 class="h3 mb-1">근무 기록</h1><p class="text-secondary mb-0">%s · %s</p></div>
-                <form method="post" action="/logout">%s<button class="btn btn-outline-secondary" type="submit">로그아웃</button></form>
+                <div class="d-flex gap-2 flex-wrap">%s<form method="post" action="/logout">%s<button class="btn btn-outline-secondary" type="submit">로그아웃</button></form></div>
             </div>
             <div class="row g-3 mb-3">
                 <div class="col-12 col-md-3"><a class="btn btn-success w-100 py-3" href="/work-entries/create">근무시간 입력</a></div>
@@ -416,9 +520,163 @@ final class WebController
             </section>',
             $this->h((string)$user['name']),
             $this->h((string)$user['email']),
+            $adminAction,
             CsrfService::input(),
             $this->entriesTable($entries, '/work-entries')
         );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $users
+     * @param array<int, array<string, mixed>> $logs
+     */
+    private function adminAiUsersPage(array $users, array $logs): string
+    {
+        return sprintf(
+            '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
+                <div><h1 class="h3 mb-1">AI 사용자 관리</h1><p class="text-secondary mb-0">사용자별 AI 변환 권한과 일일 사용 한도를 관리합니다.</p></div>
+                <a class="btn btn-outline-secondary" href="/work-entries">홈</a>
+            </div>
+            <section class="border rounded-2 bg-white mb-3">
+                <div class="p-3 border-bottom">
+                    <h2 class="h5 mb-1">사용자 권한</h2>
+                    <p class="text-secondary mb-0">새 사용자는 기본적으로 AI 사용 불가, 일일 한도 0회입니다.</p>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead><tr><th>사용자</th><th>역할</th><th class="text-end">오늘</th><th class="text-end">전체</th><th>최근 사용</th><th class="text-end">권한</th></tr></thead>
+                        <tbody>%s</tbody>
+                    </table>
+                </div>
+            </section>
+            <section class="border rounded-2 bg-white">
+                <div class="p-3 border-bottom">
+                    <h2 class="h5 mb-1">최근 AI 사용 로그</h2>
+                    <p class="text-secondary mb-0">입력 원문은 저장하지 않고 SHA-256 해시와 결과만 기록합니다.</p>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead><tr><th>시간</th><th>사용자</th><th>모델</th><th>결과</th><th>오류</th></tr></thead>
+                        <tbody>%s</tbody>
+                    </table>
+                </div>
+            </section>',
+            $this->adminAiUserRows($users),
+            $this->adminAiUsageLogRows($logs)
+        );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $users
+     */
+    private function adminAiUserRows(array $users): string
+    {
+        if ($users === []) {
+            return '<tr><td class="text-center text-secondary py-4" colspan="6">사용자가 없습니다.</td></tr>';
+        }
+
+        $rows = '';
+
+        foreach ($users as $user) {
+            $enabled = (int)($user['ai_enabled'] ?? 0) === 1;
+            $dailyLimit = (int)($user['ai_daily_limit'] ?? 0);
+            $usedToday = (int)($user['ai_used_today'] ?? 0);
+            $remaining = max(0, $dailyLimit - $usedToday);
+            $lastUsedAt = isset($user['last_used_at']) && $user['last_used_at'] !== null
+                ? (string)$user['last_used_at']
+                : '-';
+
+            $rows .= sprintf(
+                '<tr>
+                    <td><div class="fw-semibold">%s</div><div class="text-secondary small">%s</div></td>
+                    <td>%s</td>
+                    <td class="text-end">%d/%d회<div class="text-secondary small">남은 %d회</div></td>
+                    <td class="text-end">%d회</td>
+                    <td>%s</td>
+                    <td>
+                        <form class="d-flex justify-content-end align-items-center gap-2 flex-wrap" method="post" action="/admin/ai-users/%d">
+                            %s
+                            <input type="hidden" name="aiEnabled" value="0">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" id="aiEnabled%d" type="checkbox" name="aiEnabled" value="1"%s>
+                                <label class="form-check-label small" for="aiEnabled%d">허용</label>
+                            </div>
+                            <label class="visually-hidden" for="aiDailyLimit%d">일일 한도</label>
+                            <input class="form-control form-control-sm text-end" id="aiDailyLimit%d" type="number" min="0" max="10000" name="aiDailyLimit" value="%d" style="width: 104px">
+                            <button class="btn btn-sm btn-primary" type="submit">저장</button>
+                        </form>
+                    </td>
+                </tr>',
+                $this->h((string)$user['name']),
+                $this->h((string)$user['email']),
+                $this->h((string)$user['role']),
+                $usedToday,
+                $dailyLimit,
+                $remaining,
+                (int)($user['ai_total_usage_count'] ?? 0),
+                $this->h($lastUsedAt),
+                (int)$user['id'],
+                CsrfService::input(),
+                (int)$user['id'],
+                $enabled ? ' checked' : '',
+                (int)$user['id'],
+                (int)$user['id'],
+                (int)$user['id'],
+                $dailyLimit
+            );
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $logs
+     */
+    private function adminAiUsageLogRows(array $logs): string
+    {
+        if ($logs === []) {
+            return '<tr><td class="text-center text-secondary py-4" colspan="5">AI 사용 로그가 없습니다.</td></tr>';
+        }
+
+        $rows = '';
+
+        foreach ($logs as $log) {
+            $errorMessage = isset($log['error_message']) && is_string($log['error_message']) && trim($log['error_message']) !== ''
+                ? $log['error_message']
+                : '-';
+
+            $rows .= sprintf(
+                '<tr>
+                    <td>%s</td>
+                    <td><div class="fw-semibold">%s</div><div class="text-secondary small">%s</div></td>
+                    <td>%s<div class="text-secondary small">%s</div></td>
+                    <td>%s</td>
+                    <td class="text-break">%s</td>
+                </tr>',
+                $this->h((string)$log['created_at']),
+                $this->h((string)$log['name']),
+                $this->h((string)$log['email']),
+                $this->h((string)$log['provider']),
+                $this->h((string)$log['model']),
+                $this->aiUsageResultBadge((string)$log['result']),
+                $this->h($errorMessage)
+            );
+        }
+
+        return $rows;
+    }
+
+    private function aiUsageResultBadge(string $result): string
+    {
+        $class = match ($result) {
+            'success' => 'success',
+            'failed' => 'danger',
+            'rate_limited' => 'warning text-dark',
+            'disabled' => 'secondary',
+            default => 'info text-dark',
+        };
+
+        return sprintf('<span class="badge text-bg-%s">%s</span>', $class, $this->h($result));
     }
 
     private function createWorkEntryPage(): string
@@ -441,53 +699,37 @@ final class WebController
     }
 
     /**
-     * @param array<string, mixed>|null $setting
+     * @param array<string, mixed> $aiStatus
      */
-    private function importWorkEntriesPage(?array $setting): string
+    private function importWorkEntriesPage(array $aiStatus): string
     {
-        $provider = (string)($setting['provider'] ?? 'gemini');
-        $model = (string)($setting['model'] ?? $this->aiCredentialService->defaultModel($provider));
-        $hint = isset($setting['api_key_hint']) && is_string($setting['api_key_hint'])
-            ? '저장됨: ' . $setting['api_key_hint']
-            : 'API Key 입력';
+        $aiUsable = (bool)($aiStatus['usable'] ?? false);
+        $aiHelp = $this->aiUsageHelp($aiStatus);
         $sample = "04/04 5:30 - 16:00\n04/05 14:00 - 16:30\n\n04/13 9:30 - 10:00 , 14:15 - 16:15";
 
         return sprintf(
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
-                <div><h1 class="h3 mb-1">근무시간 일괄 입력</h1><p class="text-secondary mb-0">정규 포맷은 빠르게 해석하고, 애매한 텍스트는 저장된 AI Key로 변환합니다.</p></div>
+                <div><h1 class="h3 mb-1">근무시간 일괄 입력</h1><p class="text-secondary mb-0">정규 포맷은 빠르게 해석하고, 권한이 있는 사용자는 서버 AI로 애매한 텍스트를 변환합니다.</p></div>
                 <a class="btn btn-outline-secondary" href="/work-entries">홈</a>
             </div>
             <section class="border rounded-2 bg-white p-3">
                 <form class="row g-3" method="post" action="/work-entries/import/preview">
                     %s
-                    <div class="col-12 col-md-3">
+                    <div class="col-12 col-md-4">
                         <label class="form-label" for="baseYear">기준 연도</label>
                         <input class="form-control" id="baseYear" name="baseYear" inputmode="numeric" value="%s" required>
                     </div>
-                    <div class="col-12 col-md-3">
+                    <div class="col-12 col-md-4">
                         <label class="form-label" for="parserMode">변환 방식</label>
                         <select class="form-select" id="parserMode" name="parserMode">
                             <option value="auto">정규 포맷 우선</option>
                             <option value="pattern">정규 포맷만</option>
-                            <option value="ai">AI로 변환</option>
+                            <option value="ai"%s>AI로 변환</option>
                         </select>
                     </div>
-                    <div class="col-12 col-md-3">
-                        <label class="form-label" for="provider">AI Provider</label>
-                        <select class="form-select" id="provider" name="provider">
-                            <option value="gemini"%s>Gemini</option>
-                            <option value="openai"%s>OpenAI</option>
-                            <option value="anthropic"%s>Anthropic</option>
-                        </select>
-                    </div>
-                    <div class="col-12 col-md-3">
-                        <label class="form-label" for="model">모델</label>
-                        <input class="form-control" id="model" name="model" value="%s" maxlength="120">
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label" for="apiKey">AI API Key</label>
-                        <input class="form-control" id="apiKey" type="password" name="apiKey" placeholder="%s" autocomplete="off">
-                        <div class="form-text">입력한 Key는 서버에서 암호화해 저장합니다. 비워두면 저장된 Key를 사용합니다.</div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">AI 사용 상태</label>
+                        <div class="form-control bg-light">%s</div>
                     </div>
                     <div class="col-12">
                         <label class="form-label" for="rawText">근무시간 텍스트</label>
@@ -498,13 +740,35 @@ final class WebController
             </section>',
             CsrfService::input(),
             $this->h(date('Y')),
-            $provider === 'gemini' ? ' selected' : '',
-            $provider === 'openai' ? ' selected' : '',
-            $provider === 'anthropic' ? ' selected' : '',
-            $this->h($model),
-            $this->h($hint),
+            $aiUsable ? '' : ' disabled',
+            $this->h($aiHelp),
             $this->h($sample)
         );
+    }
+
+    /**
+     * @param array<string, mixed> $aiStatus
+     */
+    private function aiUsageHelp(array $aiStatus): string
+    {
+        if (!($aiStatus['configured'] ?? false)) {
+            return '서버 AI Key 미설정';
+        }
+
+        if (!($aiStatus['enabled'] ?? false)) {
+            return 'AI 사용 불가';
+        }
+
+        $dailyLimit = (int)($aiStatus['dailyLimit'] ?? 0);
+        $usedToday = (int)($aiStatus['usedToday'] ?? 0);
+        $provider = (string)($aiStatus['provider'] ?? '');
+        $model = (string)($aiStatus['model'] ?? '');
+
+        if ($dailyLimit < 1) {
+            return 'AI 일일 한도 0회';
+        }
+
+        return sprintf('%s / %s · 오늘 %d/%d회 사용', $provider, $model, $usedToday, $dailyLimit);
     }
 
     /**
@@ -643,6 +907,18 @@ final class WebController
                     <div class="col-12"><button class="btn btn-primary" type="submit">설정 저장</button></div>
                 </form>
             </section>
+            <section class="border rounded-2 bg-white p-3 mb-3">
+                <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                    <div>
+                        <h2 class="h5 mb-1">수동 발송</h2>
+                        <p class="text-secondary mb-0">저장된 정기 발송 설정과 요약 기간 기준으로 지금 바로 메시지를 보냅니다. 사용자별 1시간 3회까지 가능합니다.</p>
+                    </div>
+                    <form method="post" action="/notification-settings/send">
+                        %s
+                        <button class="btn btn-primary" type="submit">지금 발송</button>
+                    </form>
+                </div>
+            </section>
             <section class="border rounded-2 bg-white p-3">
                 <h2 class="h5 mb-3">외부 서버 호출 예시</h2>
                 <pre class="bg-light border rounded-2 p-3 mb-0 overflow-auto"><code>curl -X POST %s/api/webhooks/work-summary \\
@@ -706,6 +982,7 @@ final class WebController
             $channel === 'discord' ? '' : ' d-none',
             $this->h($this->secretPlaceholder($setting['discord_webhook_url'] ?? null, 'Webhook URL')),
             $this->requiredWhenEmpty($setting['discord_webhook_url'] ?? null),
+            CsrfService::input(),
             $this->h($appUrl),
             $this->h($examplePayload)
         );
@@ -1221,6 +1498,24 @@ final class WebController
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    private function requireAdminUser(): array
+    {
+        try {
+            return $this->authMiddleware->requireRole('admin');
+        } catch (RuntimeException $e) {
+            if ($e->getMessage() === '접근 권한이 없습니다.') {
+                $this->flash('danger', '관리자 권한이 필요합니다.');
+                $this->redirect('/work-entries');
+            }
+
+            $this->flash('danger', '로그인이 필요합니다.');
+            $this->redirect('/login');
+        }
+    }
+
+    /**
      * @param array<string, mixed> $payload
      */
     private function returnPathFromPayload(array $payload, string $default): string
@@ -1262,6 +1557,20 @@ final class WebController
     }
 
     /**
+     * @param array<string, mixed> $user
+     * @return array<string, mixed>
+     */
+    private function userAiAccessForAudit(array $user): array
+    {
+        return [
+            'id' => (int)$user['id'],
+            'email' => (string)$user['email'],
+            'ai_enabled' => (int)($user['ai_enabled'] ?? 0),
+            'ai_daily_limit' => (int)($user['ai_daily_limit'] ?? 0),
+        ];
+    }
+
+    /**
      * @return array<string, string|null>
      */
     private function requestContext(): array
@@ -1300,13 +1609,59 @@ final class WebController
         header('Content-Type: text/html; charset=utf-8');
         echo '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<title>' . $this->h($title) . ' · 근무시간 관리</title>';
+        echo '<link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#05285f">';
+        echo $this->googleAnalyticsSnippet($title);
         echo '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">';
         echo '<style>body{background:#f6f7f9}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
         echo '</head><body><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/work-entries">근무시간 관리</a><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-secondary" href="/health">상태</a><a class="btn btn-sm btn-outline-secondary" href="/index.html">AI 파서</a></div></div></nav>';
         echo '<main class="container container-narrow py-4">' . $flashHtml . $body . '</main>';
         echo '<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>';
+        echo '<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js"); }); }</script>';
         echo '</body></html>';
         exit;
+    }
+
+    private function googleAnalyticsSnippet(string $title): string
+    {
+        if (Env::get('APP_ENV') !== 'production') {
+            return '';
+        }
+
+        $measurementId = trim(Env::get('GA_MEASUREMENT_ID'));
+
+        if ($measurementId === '' || preg_match('/^G-[A-Z0-9]+$/', $measurementId) !== 1) {
+            return '';
+        }
+
+        $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+        $path = is_string($path) && $path !== '' ? $path : '/';
+
+        if ($path === '/health') {
+            return '';
+        }
+
+        $encodedId = rawurlencode($measurementId);
+        $pagePathJson = json_encode($path, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $pageTitleJson = json_encode($title . ' · 근무시간 관리', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        if ($pagePathJson === false || $pageTitleJson === false) {
+            return '';
+        }
+
+        return sprintf(
+            '<script async src="https://www.googletagmanager.com/gtag/js?id=%s"></script>
+            <script>
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag("js", new Date());
+            gtag("config", "%s", {"send_page_view": false});
+            gtag("event", "page_view", {"page_path": %s, "page_title": %s});
+            </script>',
+            $encodedId,
+            $this->h($measurementId),
+            $pagePathJson,
+            $pageTitleJson
+        );
     }
 
     private function flash(string $type, string $message): void
@@ -1331,6 +1686,11 @@ final class WebController
         header('X-Content-Type-Options: nosniff');
         header('Referrer-Policy: same-origin');
         header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+        header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+
+        if (Env::get('APP_ENV') === 'production') {
+            header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+        }
     }
 
     private function redirect(string $path): never
