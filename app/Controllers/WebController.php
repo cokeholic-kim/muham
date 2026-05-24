@@ -35,10 +35,11 @@ final class WebController
     public function home(): never
     {
         $this->render(
-            '알바 근무시간 관리',
+            '머함 - 알바 근무시간 관리',
             $this->landingPage(),
             [
-                'description' => '알바와 파트타임 근무시간을 빠르게 기록하고 월별 근무 내역을 정리해 공유할 수 있는 웹앱입니다.',
+                'description' => '머함은 알바와 파트타임 근무시간을 빠르게 기록하고 월별 근무 내역을 정리해 공유할 수 있는 웹앱입니다. 뭐함처럼 쉬운 근무시간 관리가 필요할 때 사용할 수 있습니다.',
+                'keywords' => '머함, 뭐함, 알바 근무시간, 파트타임 근무시간, 근무시간 관리, 근무 기록, 알바 시간표',
                 'robots' => 'index,follow',
                 'canonical' => '/',
             ]
@@ -51,7 +52,8 @@ final class WebController
             '기능',
             $this->featuresPage(),
             [
-                'description' => '근무시간 입력, 월별 조회, 일괄 입력, 정기 발송으로 파트타임 근무 내역 관리를 돕습니다.',
+                'description' => '머함은 근무시간 입력, 월별 조회, 일괄 입력, 정기 발송으로 파트타임 근무 내역 관리를 돕습니다.',
+                'keywords' => '머함 기능, 뭐함 기능, 알바 근무시간 관리, 근무시간 입력, 월별 근무 조회',
                 'robots' => 'index,follow',
                 'canonical' => '/features',
             ]
@@ -64,7 +66,8 @@ final class WebController
             '사용 가이드',
             $this->guidePage(),
             [
-                'description' => '알바 근무시간을 기록하고 월별 내역을 확인한 뒤 필요한 사람에게 전달하는 기본 사용 방법입니다.',
+                'description' => '머함에서 알바 근무시간을 기록하고 월별 내역을 확인한 뒤 필요한 사람에게 전달하는 기본 사용 방법입니다.',
+                'keywords' => '머함 사용법, 뭐함 사용법, 알바 근무시간 기록, 근무시간 정리 방법',
                 'robots' => 'index,follow',
                 'canonical' => '/guide',
             ]
@@ -77,7 +80,8 @@ final class WebController
             '자주 묻는 질문',
             $this->faqPage(),
             [
-                'description' => '근무시간 관리 웹앱의 사용 범위, AI 변환, 알림 발송, 데이터 관리에 대한 자주 묻는 질문입니다.',
+                'description' => '머함 근무시간 관리 웹앱의 사용 범위, AI 변환, 알림 발송, 데이터 관리에 대한 자주 묻는 질문입니다.',
+                'keywords' => '머함 FAQ, 뭐함 FAQ, 근무시간 관리 질문, 알바 근무 기록',
                 'robots' => 'index,follow',
                 'canonical' => '/faq',
             ]
@@ -588,9 +592,9 @@ final class WebController
             '<section class="py-4 py-md-5">
                 <div class="row align-items-center g-4 g-lg-5">
                     <div class="col-12 col-lg-7">
-                        <span class="badge text-bg-primary mb-3">파트타임 근무시간 관리</span>
-                        <h1 class="display-5 fw-semibold mb-3">알바 근무시간을 기록하고 정리해서 바로 전달하세요</h1>
-                        <p class="lead text-secondary mb-4">출근과 퇴근 시간, 휴게 시간, 월별 합계를 한 곳에서 관리합니다. 복잡한 엑셀 없이 근무 내역을 입력하고 필요한 기간만 빠르게 확인할 수 있습니다.</p>
+                        <span class="badge text-bg-primary mb-3">머함 · 파트타임 근무시간 관리</span>
+                        <h1 class="display-5 fw-semibold mb-3">머함에서 알바 근무시간을 기록하고 정리해서 바로 전달하세요</h1>
+                        <p class="lead text-secondary mb-4">머함은 출근과 퇴근 시간, 휴게 시간, 월별 합계를 한 곳에서 관리하는 웹앱입니다. 뭐함처럼 쉽게 근무 내역을 입력하고 필요한 기간만 빠르게 확인할 수 있습니다.</p>
                         <div class="d-flex flex-wrap gap-2">
                             <a class="btn btn-primary btn-lg" href="%s">%s</a>
                             <a class="btn btn-outline-secondary btn-lg" href="/guide">사용 방법</a>
@@ -639,7 +643,7 @@ final class WebController
     {
         return sprintf(
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
-                <div><h1 class="h3 mb-1">기능</h1><p class="text-secondary mb-0">파트타임 근무 내역을 기록하고 정리하는 데 필요한 기본 기능입니다.</p></div>
+                <div><h1 class="h3 mb-1">머함 기능</h1><p class="text-secondary mb-0">파트타임 근무 내역을 기록하고 정리하는 데 필요한 기본 기능입니다.</p></div>
                 <a class="btn btn-primary" href="/signup">시작하기</a>
             </div>
             <section class="row g-3">%s</section>',
@@ -658,7 +662,7 @@ final class WebController
     {
         return
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
-                <div><h1 class="h3 mb-1">사용 가이드</h1><p class="text-secondary mb-0">근무시간을 입력하고 월별로 정리하는 기본 흐름입니다.</p></div>
+                <div><h1 class="h3 mb-1">머함 사용 가이드</h1><p class="text-secondary mb-0">근무시간을 입력하고 월별로 정리하는 기본 흐름입니다.</p></div>
                 <a class="btn btn-primary" href="/signup">시작하기</a>
             </div>
             <section class="border rounded-2 bg-white p-3">
@@ -675,11 +679,11 @@ final class WebController
     {
         return
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
-                <div><h1 class="h3 mb-1">자주 묻는 질문</h1><p class="text-secondary mb-0">공개 서비스 사용 전에 확인할 수 있는 기본 안내입니다.</p></div>
+                <div><h1 class="h3 mb-1">머함 자주 묻는 질문</h1><p class="text-secondary mb-0">공개 서비스 사용 전에 확인할 수 있는 기본 안내입니다.</p></div>
                 <a class="btn btn-primary" href="/signup">시작하기</a>
             </div>
             <section class="accordion" id="faqList">
-                ' . $this->faqItem('faqOne', '누가 사용하면 좋나요?', '알바, 파트타임, 단기 근무처럼 매달 근무 시간이 달라지는 사람이 자신의 근무 내역을 정리할 때 적합합니다.', true) . '
+                ' . $this->faqItem('faqOne', '누가 사용하면 좋나요?', '머함은 알바, 파트타임, 단기 근무처럼 매달 근무 시간이 달라지는 사람이 자신의 근무 내역을 정리할 때 적합합니다.', true) . '
                 ' . $this->faqItem('faqTwo', 'AI 기능은 누구나 사용할 수 있나요?', '기본값은 사용 불가입니다. 관리자가 사용자별로 AI 사용 여부와 일일 한도를 설정한 경우에만 사용할 수 있습니다.', false) . '
                 ' . $this->faqItem('faqThree', '브라우저에 API Key를 입력해야 하나요?', '아니요. 운영 기능은 서버에 설정된 API Key를 사용하고, 사용자별 권한과 횟수 제한을 적용합니다.', false) . '
                 ' . $this->faqItem('faqFour', '근무 기록은 공개되나요?', '아니요. 근무 기록과 알림 설정은 로그인 후 본인 계정 기준으로 접근합니다.', false) . '
@@ -1847,6 +1851,7 @@ final class WebController
 
         $fullTitle = ($meta['fullTitle'] ?? ($title . ' · 근무시간 관리'));
         $description = $meta['description'] ?? '근무시간 입력, 조회, 기간별 정리를 위한 웹앱입니다.';
+        $keywords = $meta['keywords'] ?? '';
         $robots = $meta['robots'] ?? 'noindex,nofollow';
         $canonical = $this->absoluteUrl($meta['canonical'] ?? $this->currentPath());
         $ogImage = $this->absoluteUrl('/pwa-icons/icon-512.png');
@@ -1868,11 +1873,14 @@ final class WebController
         echo '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<title>' . $this->h($fullTitle) . '</title>';
         echo '<meta name="description" content="' . $this->h($description) . '">';
+        if ($keywords !== '') {
+            echo '<meta name="keywords" content="' . $this->h($keywords) . '">';
+        }
         echo '<meta name="robots" content="' . $this->h($robots) . '">';
         echo '<link rel="canonical" href="' . $this->h($canonical) . '">';
         echo '<meta property="og:type" content="website">';
         echo '<meta property="og:locale" content="ko_KR">';
-        echo '<meta property="og:site_name" content="근무시간 관리">';
+        echo '<meta property="og:site_name" content="머함">';
         echo '<meta property="og:title" content="' . $this->h($fullTitle) . '">';
         echo '<meta property="og:description" content="' . $this->h($description) . '">';
         echo '<meta property="og:url" content="' . $this->h($canonical) . '">';
@@ -1888,7 +1896,7 @@ final class WebController
         echo $this->googleAnalyticsSnippet($title);
         echo '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">';
         echo '<style>body{background:#f6f7f9}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}.display-5{letter-spacing:0}.lead{line-height:1.65}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
-        echo '</head><body><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/">근무시간 관리</a><div class="d-flex gap-2 flex-wrap">' . $publicLinks . $internalLinks . $navAction . '</div></div></nav>';
+        echo '</head><body><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/">머함</a><div class="d-flex gap-2 flex-wrap">' . $publicLinks . $internalLinks . $navAction . '</div></div></nav>';
         echo '<main class="container container-narrow py-4">' . $flashHtml . $body . '</main>';
         echo '<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>';
         echo '<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js?v=2"); }); }</script>';
@@ -1944,7 +1952,8 @@ final class WebController
         $payload = [
             '@context' => 'https://schema.org',
             '@type' => 'SoftwareApplication',
-            'name' => '근무시간 관리',
+            'name' => '머함',
+            'alternateName' => ['뭐함', '근무시간 관리'],
             'applicationCategory' => 'BusinessApplication',
             'operatingSystem' => 'Web',
             'url' => $url,
