@@ -289,6 +289,14 @@ if ($path === '/faq' && $routeMethod === 'GET') {
     $webController->faq();
 }
 
+if ($path === '/privacy' && $routeMethod === 'GET') {
+    $webController->privacy();
+}
+
+if ($path === '/terms' && $routeMethod === 'GET') {
+    $webController->terms();
+}
+
 if ($path === '/robots.txt' && $routeMethod === 'GET') {
     $webController->robotsTxt();
 }

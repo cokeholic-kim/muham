@@ -38,6 +38,7 @@ final class WebController
             '머함 - 알바 근무시간 관리',
             $this->landingPage(),
             [
+                'fullTitle' => '머함 - 알바 근무시간 관리',
                 'description' => '머함은 알바·파트타임 근무시간을 기록하고 월별 내역을 정리하는 웹앱입니다.',
                 'keywords' => '머함, 뭐함, 알바 근무시간, 파트타임 근무시간, 근무시간 관리, 근무 기록, 알바 시간표',
                 'robots' => 'index,follow',
@@ -52,6 +53,7 @@ final class WebController
             '기능',
             $this->featuresPage(),
             [
+                'fullTitle' => '머함 기능 - 근무시간 입력과 월별 정리',
                 'description' => '머함은 근무시간 입력, 월별 조회, 일괄 입력, 정기 발송으로 파트타임 근무 내역 관리를 돕습니다.',
                 'keywords' => '머함 기능, 뭐함 기능, 알바 근무시간 관리, 근무시간 입력, 월별 근무 조회',
                 'robots' => 'index,follow',
@@ -66,6 +68,7 @@ final class WebController
             '사용 가이드',
             $this->guidePage(),
             [
+                'fullTitle' => '머함 사용 가이드 - 알바 근무시간 기록 방법',
                 'description' => '머함에서 알바 근무시간을 기록하고 월별 내역을 확인한 뒤 필요한 사람에게 전달하는 기본 사용 방법입니다.',
                 'keywords' => '머함 사용법, 뭐함 사용법, 알바 근무시간 기록, 근무시간 정리 방법',
                 'robots' => 'index,follow',
@@ -80,10 +83,41 @@ final class WebController
             '자주 묻는 질문',
             $this->faqPage(),
             [
+                'fullTitle' => '머함 FAQ - 근무시간 관리 질문',
                 'description' => '머함 근무시간 관리 웹앱의 사용 범위, AI 변환, 알림 발송, 데이터 관리에 대한 자주 묻는 질문입니다.',
                 'keywords' => '머함 FAQ, 뭐함 FAQ, 근무시간 관리 질문, 알바 근무 기록',
                 'robots' => 'index,follow',
                 'canonical' => '/faq',
+            ]
+        );
+    }
+
+    public function privacy(): never
+    {
+        $this->render(
+            '개인정보처리방침',
+            $this->privacyPage(),
+            [
+                'fullTitle' => '머함 개인정보처리방침',
+                'description' => '머함의 개인정보 수집, 이용, 보관, 보안 처리 기준을 안내합니다.',
+                'keywords' => '머함 개인정보처리방침, 근무시간 관리 개인정보, 알바 근무 기록 개인정보',
+                'robots' => 'index,follow',
+                'canonical' => '/privacy',
+            ]
+        );
+    }
+
+    public function terms(): never
+    {
+        $this->render(
+            '이용약관',
+            $this->termsPage(),
+            [
+                'fullTitle' => '머함 이용약관',
+                'description' => '머함 근무시간 관리 서비스 이용 조건과 사용자 책임을 안내합니다.',
+                'keywords' => '머함 이용약관, 근무시간 관리 약관, 알바 근무 기록 서비스',
+                'robots' => 'index,follow',
+                'canonical' => '/terms',
             ]
         );
     }
@@ -108,7 +142,7 @@ final class WebController
 
     public function sitemapXml(): never
     {
-        $urls = ['/', '/features', '/guide', '/faq'];
+        $urls = ['/', '/features', '/guide', '/faq', '/privacy', '/terms'];
         $lastmod = date('Y-m-d');
 
         http_response_code(200);
@@ -694,6 +728,13 @@ final class WebController
                 <div><h1 class="h3 mb-1">머함 기능</h1><p class="text-secondary mb-0">파트타임 근무 내역을 기록하고 정리하는 데 필요한 기본 기능입니다.</p></div>
                 <a class="btn btn-primary" href="/signup">시작하기</a>
             </div>
+            <section class="border-top border-bottom py-4 mb-4">
+                <div class="row g-4">
+                    <div class="col-12 col-md-4"><h2 class="h5">알바 근무시간 계산</h2><p class="text-secondary mb-0">출근, 퇴근, 휴게 시간을 입력하면 월별 실근무 시간을 확인할 수 있습니다.</p></div>
+                    <div class="col-12 col-md-4"><h2 class="h5">파트타임 근무 기록</h2><p class="text-secondary mb-0">매장, 업무, 메모를 함께 남겨 나중에 급여 확인이나 근무 내역 전달에 활용할 수 있습니다.</p></div>
+                    <div class="col-12 col-md-4"><h2 class="h5">월별 근무시간 정리</h2><p class="text-secondary mb-0">이번 달과 지난달 기록을 빠르게 비교하고 필요한 기간만 선택해 조회합니다.</p></div>
+                </div>
+            </section>
             <section class="row g-3">%s</section>',
             $this->featureCards([
                 ['근무시간 입력', '근무일, 시작 시간, 종료 시간, 휴게 시간을 저장하고 나중에 수정할 수 있습니다.'],
@@ -713,6 +754,9 @@ final class WebController
                 <div><h1 class="h3 mb-1">머함 사용 가이드</h1><p class="text-secondary mb-0">근무시간을 입력하고 월별로 정리하는 기본 흐름입니다.</p></div>
                 <a class="btn btn-primary" href="/signup">시작하기</a>
             </div>
+            <section class="mb-4">
+                <p class="text-secondary mb-0">머함은 알바 근무시간 계산과 파트타임 근무 기록을 간단하게 만들기 위한 도구입니다. 근무가 끝날 때마다 기록하거나, 여러 날의 메모를 한 번에 정리해 월별 근무시간을 확인할 수 있습니다.</p>
+            </section>
             <section class="border rounded-2 bg-white p-3">
                 <ol class="mb-0">
                     <li class="mb-3"><strong>계정을 만듭니다.</strong><div class="text-secondary">개인 근무 기록은 로그인한 사용자 기준으로 분리됩니다.</div></li>
@@ -735,6 +779,44 @@ final class WebController
                 ' . $this->faqItem('faqTwo', 'AI 기능은 누구나 사용할 수 있나요?', '기본값은 사용 불가입니다. 관리자가 사용자별로 AI 사용 여부와 일일 한도를 설정한 경우에만 사용할 수 있습니다.', false) . '
                 ' . $this->faqItem('faqThree', '브라우저에 API Key를 입력해야 하나요?', '아니요. 운영 기능은 서버에 설정된 API Key를 사용하고, 사용자별 권한과 횟수 제한을 적용합니다.', false) . '
                 ' . $this->faqItem('faqFour', '근무 기록은 공개되나요?', '아니요. 근무 기록과 알림 설정은 로그인 후 본인 계정 기준으로 접근합니다.', false) . '
+            </section>';
+    }
+
+    private function privacyPage(): string
+    {
+        return
+            '<div class="mb-4">
+                <h1 class="h3 mb-1">개인정보처리방침</h1>
+                <p class="text-secondary mb-0">머함은 근무시간 관리에 필요한 최소한의 정보를 사용합니다.</p>
+            </div>
+            <section class="border rounded-2 bg-white p-3">
+                <h2 class="h5">수집하는 정보</h2>
+                <p class="text-secondary">회원가입과 로그인에 필요한 이메일, 이름, 비밀번호 해시를 저장합니다. 사용자가 입력한 근무일, 시작/종료 시간, 휴게 시간, 메모, 알림 설정도 서비스 제공을 위해 저장됩니다.</p>
+                <h2 class="h5 mt-4">이용 목적</h2>
+                <p class="text-secondary">근무시간 입력, 조회, 월별 근무 내역 정리, 알림 발송, 보안 감사 로그 기록에 사용합니다.</p>
+                <h2 class="h5 mt-4">보관과 보호</h2>
+                <p class="text-secondary">비밀번호는 원문이 아닌 해시로 저장합니다. 알림 토큰 등 민감 정보는 서버 측에서 보호하며, 사용자의 근무 기록은 로그인한 본인 기준으로 접근을 제한합니다.</p>
+                <h2 class="h5 mt-4">문의</h2>
+                <p class="text-secondary mb-0">개인정보 관련 문의는 서비스 운영자에게 전달해 주세요.</p>
+            </section>';
+    }
+
+    private function termsPage(): string
+    {
+        return
+            '<div class="mb-4">
+                <h1 class="h3 mb-1">이용약관</h1>
+                <p class="text-secondary mb-0">머함 이용 전 확인해야 할 기본 조건입니다.</p>
+            </div>
+            <section class="border rounded-2 bg-white p-3">
+                <h2 class="h5">서비스 목적</h2>
+                <p class="text-secondary">머함은 사용자가 알바와 파트타임 근무시간을 기록하고 월별 내역을 정리할 수 있도록 돕는 웹앱입니다.</p>
+                <h2 class="h5 mt-4">사용자 책임</h2>
+                <p class="text-secondary">사용자는 본인의 근무 기록을 정확하게 입력하고, 계정 정보를 안전하게 관리해야 합니다. 급여 정산이나 공식 증빙 제출 전에는 실제 근무 조건과 사업장 기준을 함께 확인해야 합니다.</p>
+                <h2 class="h5 mt-4">서비스 제한</h2>
+                <p class="text-secondary">AI 변환, 알림 발송 등 일부 기능은 관리자 설정, 사용 한도, 외부 서비스 상태에 따라 제한될 수 있습니다.</p>
+                <h2 class="h5 mt-4">변경</h2>
+                <p class="text-secondary mb-0">운영상 필요한 경우 서비스 기능과 약관은 변경될 수 있습니다.</p>
             </section>';
     }
 
@@ -1966,7 +2048,7 @@ final class WebController
         $keywords = $meta['keywords'] ?? '';
         $robots = $meta['robots'] ?? 'noindex,nofollow';
         $canonical = $this->absoluteUrl($meta['canonical'] ?? $this->currentPath());
-        $ogImage = $this->absoluteUrl('/pwa-icons/icon-512.png');
+        $ogImage = $this->absoluteUrl('/pwa-icons/og-image.png');
         $isLoggedIn = $hasSession && SessionService::userId() !== null;
         $navAction = $isLoggedIn
             ? '<a class="btn btn-sm btn-primary" href="/work-entries">내 기록</a>'
@@ -1997,6 +2079,8 @@ final class WebController
         echo '<meta property="og:description" content="' . $this->h($description) . '">';
         echo '<meta property="og:url" content="' . $this->h($canonical) . '">';
         echo '<meta property="og:image" content="' . $this->h($ogImage) . '">';
+        echo '<meta property="og:image:width" content="1731">';
+        echo '<meta property="og:image:height" content="909">';
         echo '<meta name="twitter:card" content="summary">';
         echo '<meta name="twitter:title" content="' . $this->h($fullTitle) . '">';
         echo '<meta name="twitter:description" content="' . $this->h($description) . '">';
@@ -2007,9 +2091,10 @@ final class WebController
         echo $this->structuredData($fullTitle, $description, $canonical);
         echo $this->googleAnalyticsSnippet($title);
         echo '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">';
-        echo '<style>body{background:#f6f7f9}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}.display-5{letter-spacing:0}.lead{line-height:1.65}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
+        echo '<style>body{background:#f6f7f9}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}.display-5{letter-spacing:0}.lead{line-height:1.65}.site-footer{border-top:1px solid #dee2e6;background:#fff}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
         echo '</head><body><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/">머함</a><div class="d-flex gap-2 flex-wrap">' . $publicLinks . $internalLinks . $navAction . '</div></div></nav>';
         echo '<main class="container container-narrow py-4">' . $flashHtml . $body . '</main>';
+        echo $this->footerHtml();
         echo '<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>';
         echo '<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js?v=2"); }); }</script>';
         echo '</body></html>';
@@ -2085,6 +2170,22 @@ final class WebController
         }
 
         return '<script type="application/ld+json">' . $json . '</script>';
+    }
+
+    private function footerHtml(): string
+    {
+        return '<footer class="site-footer py-4 mt-4">
+            <div class="container container-narrow d-flex justify-content-between align-items-center gap-3 flex-wrap">
+                <div class="text-secondary small">머함 · 알바·파트타임 근무시간 관리</div>
+                <nav class="d-flex gap-3 flex-wrap small" aria-label="하단 링크">
+                    <a class="link-secondary text-decoration-none" href="/features">기능</a>
+                    <a class="link-secondary text-decoration-none" href="/guide">가이드</a>
+                    <a class="link-secondary text-decoration-none" href="/faq">FAQ</a>
+                    <a class="link-secondary text-decoration-none" href="/privacy">개인정보처리방침</a>
+                    <a class="link-secondary text-decoration-none" href="/terms">이용약관</a>
+                </nav>
+            </div>
+        </footer>';
     }
 
     private function flash(string $type, string $message): void
