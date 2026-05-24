@@ -234,7 +234,17 @@ if ($path === '/health.json') {
 }
 
 if ($path === '/favicon.ico') {
-    http_response_code(204);
+    $faviconPath = __DIR__ . '/pwa-icons/icon-192.png';
+
+    if (!is_file($faviconPath) || !is_readable($faviconPath)) {
+        http_response_code(204);
+        exit;
+    }
+
+    http_response_code(200);
+    header('Content-Type: image/png');
+    header('Cache-Control: public, max-age=604800');
+    readfile($faviconPath);
     exit;
 }
 

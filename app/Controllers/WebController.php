@@ -1881,6 +1881,8 @@ final class WebController
         echo '<meta name="twitter:title" content="' . $this->h($fullTitle) . '">';
         echo '<meta name="twitter:description" content="' . $this->h($description) . '">';
         echo '<meta name="twitter:image" content="' . $this->h($ogImage) . '">';
+        echo '<link rel="icon" type="image/png" sizes="192x192" href="/pwa-icons/icon-192.png">';
+        echo '<link rel="apple-touch-icon" href="/pwa-icons/icon-192.png">';
         echo '<link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#05285f">';
         echo $this->structuredData($fullTitle, $description, $canonical);
         echo $this->googleAnalyticsSnippet($title);

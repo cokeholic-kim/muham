@@ -1,5 +1,6 @@
 const CACHE_NAME = 'muham-static-v2';
 const STATIC_ASSETS = [
+  '/favicon.ico',
   '/manifest.json',
   '/pwa-icons/icon-192.png',
   '/pwa-icons/icon-512.png',
