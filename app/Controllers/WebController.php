@@ -38,7 +38,7 @@ final class WebController
             '머함 - 알바 근무시간 관리',
             $this->landingPage(),
             [
-                'description' => '머함은 알바와 파트타임 근무시간을 빠르게 기록하고 월별 근무 내역을 정리해 공유할 수 있는 웹앱입니다. 뭐함처럼 쉬운 근무시간 관리가 필요할 때 사용할 수 있습니다.',
+                'description' => '머함은 알바·파트타임 근무시간을 기록하고 월별 내역을 정리하는 웹앱입니다.',
                 'keywords' => '머함, 뭐함, 알바 근무시간, 파트타임 근무시간, 근무시간 관리, 근무 기록, 알바 시간표',
                 'robots' => 'index,follow',
                 'canonical' => '/',
@@ -128,13 +128,24 @@ final class WebController
         exit;
     }
 
-    public function loginForm(): never
+    /**
+     * @param array<string, mixed> $query
+     */
+    public function loginForm(array $query): never
     {
+        $returnTo = $this->appReturnPathFromPayload($query, '/work-entries');
+
         if (SessionService::userId() !== null) {
-            $this->redirect('/work-entries');
+            $this->redirect($returnTo);
         }
 
-        $this->render('로그인', $this->authPage('로그인', '/login', '로그인', '계정이 없나요?', '/signup', '회원가입'));
+        $signupHref = '/signup';
+
+        if ($returnTo !== '/work-entries') {
+            $signupHref .= '?returnTo=' . rawurlencode($returnTo);
+        }
+
+        $this->render('로그인', $this->authPage('로그인', '/login', '로그인', '계정이 없나요?', $signupHref, '회원가입', $returnTo));
     }
 
     /**
@@ -142,28 +153,46 @@ final class WebController
      */
     public function login(array $payload): never
     {
+        $returnTo = $this->appReturnPathFromPayload($payload, '/work-entries');
+        $loginPath = '/login';
+
+        if ($returnTo !== '/work-entries') {
+            $loginPath .= '?returnTo=' . rawurlencode($returnTo);
+        }
+
         if (!$this->validateCsrf($payload)) {
             $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
-            $this->redirect('/login');
+            $this->redirect($loginPath);
         }
 
         try {
             $this->authController->login($payload);
             $this->flash('success', '로그인되었습니다.');
-            $this->redirect('/work-entries');
+            $this->redirect($returnTo);
         } catch (Throwable $e) {
             $this->flash('danger', $e->getMessage());
-            $this->redirect('/login');
+            $this->redirect($loginPath);
         }
     }
 
-    public function signupForm(): never
+    /**
+     * @param array<string, mixed> $query
+     */
+    public function signupForm(array $query): never
     {
+        $returnTo = $this->appReturnPathFromPayload($query, '/work-entries');
+
         if (SessionService::userId() !== null) {
-            $this->redirect('/work-entries');
+            $this->redirect($returnTo);
         }
 
-        $this->render('회원가입', $this->authPage('회원가입', '/signup', '회원가입', '이미 계정이 있나요?', '/login', '로그인'));
+        $loginHref = '/login';
+
+        if ($returnTo !== '/work-entries') {
+            $loginHref .= '?returnTo=' . rawurlencode($returnTo);
+        }
+
+        $this->render('회원가입', $this->authPage('회원가입', '/signup', '회원가입', '이미 계정이 있나요?', $loginHref, '로그인', $returnTo));
     }
 
     /**
@@ -171,18 +200,25 @@ final class WebController
      */
     public function signup(array $payload): never
     {
+        $returnTo = $this->appReturnPathFromPayload($payload, '/work-entries');
+        $signupPath = '/signup';
+
+        if ($returnTo !== '/work-entries') {
+            $signupPath .= '?returnTo=' . rawurlencode($returnTo);
+        }
+
         if (!$this->validateCsrf($payload)) {
             $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
-            $this->redirect('/signup');
+            $this->redirect($signupPath);
         }
 
         try {
             $this->authController->signup($payload);
             $this->flash('success', '회원가입이 완료되었습니다.');
-            $this->redirect('/work-entries');
+            $this->redirect($returnTo);
         } catch (Throwable $e) {
             $this->flash('danger', $e->getMessage());
-            $this->redirect('/signup');
+            $this->redirect($signupPath);
         }
     }
 
@@ -547,20 +583,31 @@ final class WebController
         $this->redirect('/admin/ai-users');
     }
 
-    private function authPage(string $title, string $action, string $button, string $altText, string $altHref, string $altLabel): string
-    {
+    private function authPage(
+        string $title,
+        string $action,
+        string $button,
+        string $altText,
+        string $altHref,
+        string $altLabel,
+        string $returnTo = '/work-entries'
+    ): string {
         $nameField = $action === '/signup'
             ? '<div class="mb-3"><label class="form-label" for="name">이름</label><input class="form-control" id="name" name="name" required maxlength="100"></div>'
             : '';
         $passwordAttributes = $action === '/signup'
             ? 'autocomplete="new-password" minlength="10"'
             : 'autocomplete="current-password"';
+        $returnToField = $returnTo !== '/work-entries'
+            ? sprintf('<input type="hidden" name="returnTo" value="%s">', $this->h($returnTo))
+            : '';
 
         return sprintf(
             '<div class="row justify-content-center">
                 <div class="col-12 col-sm-10 col-md-7 col-lg-5">
                     <h1 class="h3 mb-3">%s</h1>
                     <form class="border rounded-2 bg-white p-4" method="post" action="%s">
+                        %s
                         %s
                         %s
                         <div class="mb-3"><label class="form-label" for="email">이메일</label><input class="form-control" id="email" type="email" name="email" required autocomplete="email"></div>
@@ -573,6 +620,7 @@ final class WebController
             $this->h($title),
             $this->h($action),
             CsrfService::input(),
+            $returnToField,
             $nameField,
             $passwordAttributes,
             $this->h($button),
@@ -631,10 +679,10 @@ final class WebController
             $this->h($primaryHref),
             $this->h($primaryLabel),
             $this->featureCards([
-                ['빠른 입력', '날짜, 시작/종료 시간, 휴게 시간을 간단히 입력합니다.'],
-                ['월별 정리', '기간별 근무일, 실근무 시간, 휴게 시간을 자동 합산합니다.'],
-                ['일괄 변환', '여러 줄의 근무 메모를 한 번에 근무 기록으로 변환합니다.'],
-                ['정기 발송', '필요한 근무 요약을 텔레그램이나 디스코드로 전달합니다.'],
+                ['빠른 입력', '날짜, 시작/종료 시간, 휴게 시간을 간단히 입력합니다.', $this->featureEntryPath('/work-entries/create')],
+                ['월별 정리', '기간별 근무일, 실근무 시간, 휴게 시간을 자동 합산합니다.', $this->featureEntryPath('/work-entries/search')],
+                ['일괄 변환', '여러 줄의 근무 메모를 한 번에 근무 기록으로 변환합니다.', $this->featureEntryPath('/work-entries/import')],
+                ['정기 발송', '필요한 근무 요약을 텔레그램이나 디스코드로 전달합니다.', $this->featureEntryPath('/notification-settings')],
             ])
         );
     }
@@ -691,13 +739,26 @@ final class WebController
     }
 
     /**
-     * @param array<int, array{0: string, 1: string}> $items
+     * @param array<int, array{0: string, 1: string, 2?: string}> $items
      */
     private function featureCards(array $items): string
     {
         $html = '';
 
-        foreach ($items as [$title, $description]) {
+        foreach ($items as $item) {
+            [$title, $description] = $item;
+            $href = isset($item[2]) && is_string($item[2]) ? $item[2] : null;
+
+            if ($href !== null) {
+                $html .= sprintf(
+                    '<div class="col-12 col-md-6 col-lg-3"><a class="border rounded-2 bg-white p-3 h-100 d-flex flex-column text-decoration-none text-body" href="%s"><div class="d-flex justify-content-between align-items-start gap-3 mb-2"><h2 class="h6 mb-0">%s</h2><span class="text-primary fw-semibold" aria-hidden="true">&gt;</span></div><p class="text-secondary mb-0">%s</p></a></div>',
+                    $this->h($href),
+                    $this->h($title),
+                    $this->h($description)
+                );
+                continue;
+            }
+
             $html .= sprintf(
                 '<div class="col-12 col-md-6 col-lg-3"><div class="border rounded-2 bg-white p-3 h-100"><h2 class="h6 mb-2">%s</h2><p class="text-secondary mb-0">%s</p></div></div>',
                 $this->h($title),
@@ -706,6 +767,15 @@ final class WebController
         }
 
         return $html;
+    }
+
+    private function featureEntryPath(string $targetPath): string
+    {
+        if ($this->hasSessionCookie() && SessionService::userId() !== null) {
+            return $targetPath;
+        }
+
+        return '/login?returnTo=' . rawurlencode($targetPath);
     }
 
     private function faqItem(string $id, string $question, string $answer, bool $open): string
@@ -1767,6 +1837,48 @@ final class WebController
         }
 
         return $returnTo;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function appReturnPathFromPayload(array $payload, string $default): string
+    {
+        $returnTo = $payload['returnTo'] ?? null;
+
+        if (!is_string($returnTo) || !$this->isSafeAppReturnPath($returnTo)) {
+            return $default;
+        }
+
+        return $returnTo;
+    }
+
+    private function isSafeAppReturnPath(string $path): bool
+    {
+        if ($path === '' || $path[0] !== '/' || str_starts_with($path, '//')) {
+            return false;
+        }
+
+        if (str_contains($path, "\r") || str_contains($path, "\n")) {
+            return false;
+        }
+
+        $allowed = [
+            '/work-entries',
+            '/notification-settings',
+        ];
+
+        foreach ($allowed as $prefix) {
+            if (
+                $path === $prefix ||
+                str_starts_with($path, $prefix . '/') ||
+                str_starts_with($path, $prefix . '?')
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

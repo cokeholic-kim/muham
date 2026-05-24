@@ -306,7 +306,7 @@ if ($path === '/index.html' && $routeMethod === 'GET') {
 }
 
 if ($path === '/login' && $routeMethod === 'GET') {
-    $webController->loginForm();
+    $webController->loginForm($_GET);
 }
 
 if ($path === '/login' && $method === 'POST') {
@@ -314,7 +314,7 @@ if ($path === '/login' && $method === 'POST') {
 }
 
 if ($path === '/signup' && $routeMethod === 'GET') {
-    $webController->signupForm();
+    $webController->signupForm($_GET);
 }
 
 if ($path === '/signup' && $method === 'POST') {
