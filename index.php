@@ -267,6 +267,26 @@ if ($path === '/' && $routeMethod === 'GET') {
     $webController->home();
 }
 
+if ($path === '/features' && $routeMethod === 'GET') {
+    $webController->features();
+}
+
+if ($path === '/guide' && $routeMethod === 'GET') {
+    $webController->guide();
+}
+
+if ($path === '/faq' && $routeMethod === 'GET') {
+    $webController->faq();
+}
+
+if ($path === '/robots.txt' && $routeMethod === 'GET') {
+    $webController->robotsTxt();
+}
+
+if ($path === '/sitemap.xml' && $routeMethod === 'GET') {
+    $webController->sitemapXml();
+}
+
 if ($path === '/health' && $routeMethod === 'GET') {
     $webController->health();
 }

@@ -34,7 +34,94 @@ final class WebController
 
     public function home(): never
     {
-        $this->redirect(SessionService::userId() === null ? '/login' : '/work-entries');
+        $this->render(
+            '알바 근무시간 관리',
+            $this->landingPage(),
+            [
+                'description' => '알바와 파트타임 근무시간을 빠르게 기록하고 월별 근무 내역을 정리해 공유할 수 있는 웹앱입니다.',
+                'robots' => 'index,follow',
+                'canonical' => '/',
+            ]
+        );
+    }
+
+    public function features(): never
+    {
+        $this->render(
+            '기능',
+            $this->featuresPage(),
+            [
+                'description' => '근무시간 입력, 월별 조회, 일괄 입력, 정기 발송으로 파트타임 근무 내역 관리를 돕습니다.',
+                'robots' => 'index,follow',
+                'canonical' => '/features',
+            ]
+        );
+    }
+
+    public function guide(): never
+    {
+        $this->render(
+            '사용 가이드',
+            $this->guidePage(),
+            [
+                'description' => '알바 근무시간을 기록하고 월별 내역을 확인한 뒤 필요한 사람에게 전달하는 기본 사용 방법입니다.',
+                'robots' => 'index,follow',
+                'canonical' => '/guide',
+            ]
+        );
+    }
+
+    public function faq(): never
+    {
+        $this->render(
+            '자주 묻는 질문',
+            $this->faqPage(),
+            [
+                'description' => '근무시간 관리 웹앱의 사용 범위, AI 변환, 알림 발송, 데이터 관리에 대한 자주 묻는 질문입니다.',
+                'robots' => 'index,follow',
+                'canonical' => '/faq',
+            ]
+        );
+    }
+
+    public function robotsTxt(): never
+    {
+        http_response_code(200);
+        $this->securityHeaders();
+        header('Content-Type: text/plain; charset=utf-8');
+        echo "User-agent: *\n";
+        echo "Allow: /\n";
+        echo "Disallow: /admin/\n";
+        echo "Disallow: /api/\n";
+        echo "Disallow: /health\n";
+        echo "Disallow: /health.json\n";
+        echo "Disallow: /index.html\n";
+        echo "Disallow: /notification-settings\n";
+        echo "Disallow: /work-entries\n";
+        echo 'Sitemap: ' . $this->absoluteUrl('/sitemap.xml') . "\n";
+        exit;
+    }
+
+    public function sitemapXml(): never
+    {
+        $urls = ['/', '/features', '/guide', '/faq'];
+        $lastmod = date('Y-m-d');
+
+        http_response_code(200);
+        $this->securityHeaders();
+        header('Content-Type: application/xml; charset=utf-8');
+        echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+        echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+
+        foreach ($urls as $url) {
+            echo "  <url>\n";
+            echo '    <loc>' . $this->h($this->absoluteUrl($url)) . "</loc>\n";
+            echo '    <lastmod>' . $lastmod . "</lastmod>\n";
+            echo "  </url>\n";
+        }
+
+        echo "</urlset>\n";
+        exit;
     }
 
     public function loginForm(): never
@@ -328,6 +415,7 @@ final class WebController
 
         http_response_code(200);
         $this->securityHeaders();
+        header('X-Robots-Tag: noindex,nofollow');
         header('Content-Type: text/html; charset=utf-8');
         readfile($path);
         exit;
@@ -487,6 +575,150 @@ final class WebController
             $this->h($altText),
             $this->h($altHref),
             $this->h($altLabel)
+        );
+    }
+
+    private function landingPage(): string
+    {
+        $loggedIn = $this->hasSessionCookie() && SessionService::userId() !== null;
+        $primaryHref = $loggedIn ? '/work-entries' : '/signup';
+        $primaryLabel = $loggedIn ? '내 근무 기록 보기' : '무료로 시작하기';
+
+        return sprintf(
+            '<section class="py-4 py-md-5">
+                <div class="row align-items-center g-4 g-lg-5">
+                    <div class="col-12 col-lg-7">
+                        <span class="badge text-bg-primary mb-3">파트타임 근무시간 관리</span>
+                        <h1 class="display-5 fw-semibold mb-3">알바 근무시간을 기록하고 정리해서 바로 전달하세요</h1>
+                        <p class="lead text-secondary mb-4">출근과 퇴근 시간, 휴게 시간, 월별 합계를 한 곳에서 관리합니다. 복잡한 엑셀 없이 근무 내역을 입력하고 필요한 기간만 빠르게 확인할 수 있습니다.</p>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a class="btn btn-primary btn-lg" href="%s">%s</a>
+                            <a class="btn btn-outline-secondary btn-lg" href="/guide">사용 방법</a>
+                        </div>
+                    </div>
+                    <div class="col-12 col-lg-5">
+                        <div class="border rounded-2 bg-white p-3 shadow-sm">
+                            <div class="d-flex align-items-center gap-3 mb-3">
+                                <img src="/pwa-icons/icon-192.png" width="56" height="56" alt="" class="rounded-2">
+                                <div>
+                                    <div class="fw-semibold">이번 달 근무 요약</div>
+                                    <div class="text-secondary small">모바일에서도 바로 확인</div>
+                                </div>
+                            </div>
+                            <div class="row g-2 mb-3">
+                                <div class="col-4"><div class="border rounded-2 p-2"><div class="text-secondary small">근무일</div><div class="fs-5 fw-semibold">12일</div></div></div>
+                                <div class="col-4"><div class="border rounded-2 p-2"><div class="text-secondary small">실근무</div><div class="fs-5 fw-semibold">58:30</div></div></div>
+                                <div class="col-4"><div class="border rounded-2 p-2"><div class="text-secondary small">기록</div><div class="fs-5 fw-semibold">18건</div></div></div>
+                            </div>
+                            <div class="list-group list-group-flush border rounded-2">
+                                <div class="list-group-item d-flex justify-content-between"><span>05/03 09:00 - 14:00</span><strong>5:00</strong></div>
+                                <div class="list-group-item d-flex justify-content-between"><span>05/05 18:00 - 22:30</span><strong>4:30</strong></div>
+                                <div class="list-group-item d-flex justify-content-between"><span>05/08 10:00 - 16:00</span><strong>5:30</strong></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section class="py-4 border-top">
+                <div class="row g-3">
+                    %s
+                </div>
+            </section>',
+            $this->h($primaryHref),
+            $this->h($primaryLabel),
+            $this->featureCards([
+                ['빠른 입력', '날짜, 시작/종료 시간, 휴게 시간을 간단히 입력합니다.'],
+                ['월별 정리', '기간별 근무일, 실근무 시간, 휴게 시간을 자동 합산합니다.'],
+                ['일괄 변환', '여러 줄의 근무 메모를 한 번에 근무 기록으로 변환합니다.'],
+                ['정기 발송', '필요한 근무 요약을 텔레그램이나 디스코드로 전달합니다.'],
+            ])
+        );
+    }
+
+    private function featuresPage(): string
+    {
+        return sprintf(
+            '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
+                <div><h1 class="h3 mb-1">기능</h1><p class="text-secondary mb-0">파트타임 근무 내역을 기록하고 정리하는 데 필요한 기본 기능입니다.</p></div>
+                <a class="btn btn-primary" href="/signup">시작하기</a>
+            </div>
+            <section class="row g-3">%s</section>',
+            $this->featureCards([
+                ['근무시간 입력', '근무일, 시작 시간, 종료 시간, 휴게 시간을 저장하고 나중에 수정할 수 있습니다.'],
+                ['기간별 조회', '이번 달, 지난달, 직접 지정한 기간의 근무 기록과 합계를 확인합니다.'],
+                ['AI 일괄 입력', '권한이 있는 사용자는 자유 형식 근무 메모를 서버 AI로 변환할 수 있습니다.'],
+                ['알림 발송', '저장한 근무 요약을 수동 또는 정기 발송 흐름으로 전달할 수 있습니다.'],
+                ['변경 이력', '근무 기록 수정과 삭제는 버전 및 감사 로그를 남기는 방향으로 관리합니다.'],
+                ['PWA 지원', '모바일에서 설치해 앱처럼 사용할 수 있도록 manifest와 service worker를 제공합니다.'],
+            ])
+        );
+    }
+
+    private function guidePage(): string
+    {
+        return
+            '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
+                <div><h1 class="h3 mb-1">사용 가이드</h1><p class="text-secondary mb-0">근무시간을 입력하고 월별로 정리하는 기본 흐름입니다.</p></div>
+                <a class="btn btn-primary" href="/signup">시작하기</a>
+            </div>
+            <section class="border rounded-2 bg-white p-3">
+                <ol class="mb-0">
+                    <li class="mb-3"><strong>계정을 만듭니다.</strong><div class="text-secondary">개인 근무 기록은 로그인한 사용자 기준으로 분리됩니다.</div></li>
+                    <li class="mb-3"><strong>근무시간을 입력합니다.</strong><div class="text-secondary">근무일, 시작/종료 시간, 휴게 시간, 메모를 저장합니다.</div></li>
+                    <li class="mb-3"><strong>기간별로 조회합니다.</strong><div class="text-secondary">이번 달 또는 원하는 기간의 실근무 시간을 확인합니다.</div></li>
+                    <li><strong>필요한 방식으로 전달합니다.</strong><div class="text-secondary">정기 발송 설정을 사용하면 저장된 근무 요약을 메시지로 보낼 수 있습니다.</div></li>
+                </ol>
+            </section>';
+    }
+
+    private function faqPage(): string
+    {
+        return
+            '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
+                <div><h1 class="h3 mb-1">자주 묻는 질문</h1><p class="text-secondary mb-0">공개 서비스 사용 전에 확인할 수 있는 기본 안내입니다.</p></div>
+                <a class="btn btn-primary" href="/signup">시작하기</a>
+            </div>
+            <section class="accordion" id="faqList">
+                ' . $this->faqItem('faqOne', '누가 사용하면 좋나요?', '알바, 파트타임, 단기 근무처럼 매달 근무 시간이 달라지는 사람이 자신의 근무 내역을 정리할 때 적합합니다.', true) . '
+                ' . $this->faqItem('faqTwo', 'AI 기능은 누구나 사용할 수 있나요?', '기본값은 사용 불가입니다. 관리자가 사용자별로 AI 사용 여부와 일일 한도를 설정한 경우에만 사용할 수 있습니다.', false) . '
+                ' . $this->faqItem('faqThree', '브라우저에 API Key를 입력해야 하나요?', '아니요. 운영 기능은 서버에 설정된 API Key를 사용하고, 사용자별 권한과 횟수 제한을 적용합니다.', false) . '
+                ' . $this->faqItem('faqFour', '근무 기록은 공개되나요?', '아니요. 근무 기록과 알림 설정은 로그인 후 본인 계정 기준으로 접근합니다.', false) . '
+            </section>';
+    }
+
+    /**
+     * @param array<int, array{0: string, 1: string}> $items
+     */
+    private function featureCards(array $items): string
+    {
+        $html = '';
+
+        foreach ($items as [$title, $description]) {
+            $html .= sprintf(
+                '<div class="col-12 col-md-6 col-lg-3"><div class="border rounded-2 bg-white p-3 h-100"><h2 class="h6 mb-2">%s</h2><p class="text-secondary mb-0">%s</p></div></div>',
+                $this->h($title),
+                $this->h($description)
+            );
+        }
+
+        return $html;
+    }
+
+    private function faqItem(string $id, string $question, string $answer, bool $open): string
+    {
+        return sprintf(
+            '<div class="accordion-item">
+                <h2 class="accordion-header"><button class="accordion-button%s" type="button" data-bs-toggle="collapse" data-bs-target="#%s" aria-expanded="%s" aria-controls="%s">%s</button></h2>
+                <div id="%s" class="accordion-collapse collapse%s" data-bs-parent="#faqList"><div class="accordion-body text-secondary">%s</div></div>
+            </div>',
+            $open ? '' : ' collapsed',
+            $this->h($id),
+            $open ? 'true' : 'false',
+            $this->h($id),
+            $this->h($question),
+            $this->h($id),
+            $open ? ' show' : '',
+            $this->h($answer)
         );
     }
 
@@ -1589,11 +1821,20 @@ final class WebController
         ];
     }
 
-    private function render(string $title, string $body): never
+    /**
+     * @param array<string, string> $meta
+     */
+    private function render(string $title, string $body, array $meta = []): never
     {
-        SessionService::start();
-        $flash = $_SESSION['flash'] ?? null;
-        unset($_SESSION['flash']);
+        $hasSession = session_status() === PHP_SESSION_ACTIVE || $this->hasSessionCookie();
+        $flash = null;
+
+        if ($hasSession) {
+            SessionService::start();
+            $flash = $_SESSION['flash'] ?? null;
+            unset($_SESSION['flash']);
+        }
+
         $flashHtml = '';
 
         if (is_array($flash) && isset($flash['type'], $flash['message'])) {
@@ -1604,19 +1845,51 @@ final class WebController
             );
         }
 
+        $fullTitle = ($meta['fullTitle'] ?? ($title . ' · 근무시간 관리'));
+        $description = $meta['description'] ?? '근무시간 입력, 조회, 기간별 정리를 위한 웹앱입니다.';
+        $robots = $meta['robots'] ?? 'noindex,nofollow';
+        $canonical = $this->absoluteUrl($meta['canonical'] ?? $this->currentPath());
+        $ogImage = $this->absoluteUrl('/pwa-icons/icon-512.png');
+        $isLoggedIn = $hasSession && SessionService::userId() !== null;
+        $navAction = $isLoggedIn
+            ? '<a class="btn btn-sm btn-primary" href="/work-entries">내 기록</a>'
+            : '<a class="btn btn-sm btn-primary" href="/login">로그인</a>';
+        $internalLinks = $isLoggedIn
+            ? '<a class="btn btn-sm btn-outline-secondary" href="/health">상태</a><a class="btn btn-sm btn-outline-secondary" href="/index.html">AI 파서</a>'
+            : '';
+        $publicLinks = '<a class="btn btn-sm btn-outline-secondary" href="/features">기능</a><a class="btn btn-sm btn-outline-secondary" href="/guide">가이드</a><a class="btn btn-sm btn-outline-secondary" href="/faq">FAQ</a>';
+
         http_response_code(200);
         $this->securityHeaders();
+        if (str_contains($robots, 'noindex')) {
+            header('X-Robots-Tag: ' . $robots);
+        }
         header('Content-Type: text/html; charset=utf-8');
         echo '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
-        echo '<title>' . $this->h($title) . ' · 근무시간 관리</title>';
+        echo '<title>' . $this->h($fullTitle) . '</title>';
+        echo '<meta name="description" content="' . $this->h($description) . '">';
+        echo '<meta name="robots" content="' . $this->h($robots) . '">';
+        echo '<link rel="canonical" href="' . $this->h($canonical) . '">';
+        echo '<meta property="og:type" content="website">';
+        echo '<meta property="og:locale" content="ko_KR">';
+        echo '<meta property="og:site_name" content="근무시간 관리">';
+        echo '<meta property="og:title" content="' . $this->h($fullTitle) . '">';
+        echo '<meta property="og:description" content="' . $this->h($description) . '">';
+        echo '<meta property="og:url" content="' . $this->h($canonical) . '">';
+        echo '<meta property="og:image" content="' . $this->h($ogImage) . '">';
+        echo '<meta name="twitter:card" content="summary">';
+        echo '<meta name="twitter:title" content="' . $this->h($fullTitle) . '">';
+        echo '<meta name="twitter:description" content="' . $this->h($description) . '">';
+        echo '<meta name="twitter:image" content="' . $this->h($ogImage) . '">';
         echo '<link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#05285f">';
+        echo $this->structuredData($fullTitle, $description, $canonical);
         echo $this->googleAnalyticsSnippet($title);
         echo '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">';
-        echo '<style>body{background:#f6f7f9}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
-        echo '</head><body><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/work-entries">근무시간 관리</a><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-secondary" href="/health">상태</a><a class="btn btn-sm btn-outline-secondary" href="/index.html">AI 파서</a></div></div></nav>';
+        echo '<style>body{background:#f6f7f9}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}.display-5{letter-spacing:0}.lead{line-height:1.65}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
+        echo '</head><body><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/">근무시간 관리</a><div class="d-flex gap-2 flex-wrap">' . $publicLinks . $internalLinks . $navAction . '</div></div></nav>';
         echo '<main class="container container-narrow py-4">' . $flashHtml . $body . '</main>';
         echo '<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>';
-        echo '<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js"); }); }</script>';
+        echo '<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js?v=2"); }); }</script>';
         echo '</body></html>';
         exit;
     }
@@ -1664,6 +1937,33 @@ final class WebController
         );
     }
 
+    private function structuredData(string $title, string $description, string $url): string
+    {
+        $payload = [
+            '@context' => 'https://schema.org',
+            '@type' => 'SoftwareApplication',
+            'name' => '근무시간 관리',
+            'applicationCategory' => 'BusinessApplication',
+            'operatingSystem' => 'Web',
+            'url' => $url,
+            'description' => $description,
+            'inLanguage' => 'ko-KR',
+            'offers' => [
+                '@type' => 'Offer',
+                'price' => '0',
+                'priceCurrency' => 'KRW',
+            ],
+        ];
+
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        if ($json === false) {
+            return '';
+        }
+
+        return '<script type="application/ld+json">' . $json . '</script>';
+    }
+
     private function flash(string $type, string $message): void
     {
         SessionService::start();
@@ -1702,6 +2002,35 @@ final class WebController
     private function h(string $value): string
     {
         return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+    }
+
+    private function hasSessionCookie(): bool
+    {
+        $sessionId = $_COOKIE['muham_session'] ?? null;
+
+        return is_string($sessionId) && $sessionId !== '';
+    }
+
+    private function absoluteUrl(string $path): string
+    {
+        $baseUrl = rtrim(Env::get('APP_URL', 'http://localhost:8000'), '/');
+
+        if ($path === '') {
+            $path = '/';
+        }
+
+        if (preg_match('#^https?://#', $path) === 1) {
+            return $path;
+        }
+
+        return $baseUrl . '/' . ltrim($path, '/');
+    }
+
+    private function currentPath(): string
+    {
+        $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+
+        return is_string($path) && $path !== '' ? $path : '/';
     }
 
     private function formatMinutes(int $minutes): string
