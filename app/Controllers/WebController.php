@@ -11,6 +11,7 @@ use App\Services\AuditLogService;
 use App\Services\CsrfService;
 use App\Services\NotificationSettingService;
 use App\Services\SessionService;
+use App\Services\SupportInquiryService;
 use App\Services\WebhookService;
 use App\Services\WorkEntryService;
 use App\Services\WorkEntryImportService;
@@ -27,6 +28,7 @@ final class WebController
         private readonly WorkEntryImportService $workEntryImportService,
         private readonly AdminAiUserService $adminAiUserService,
         private readonly NotificationSettingService $notificationSettingService,
+        private readonly SupportInquiryService $supportInquiryService,
         private readonly AuditLogService $auditLogService,
         private readonly WebhookService $webhookService
     ) {
@@ -266,6 +268,135 @@ final class WebController
         $this->authController->logout();
         $this->flash('success', '로그아웃되었습니다.');
         $this->redirect('/login');
+    }
+
+    public function supportForm(): never
+    {
+        $user = $this->requireWebUser();
+
+        try {
+            $inquiries = $this->supportInquiryService->listForUser($user);
+            $this->supportInquiryService->markAnsweredAsRead($user);
+        } catch (Throwable $e) {
+            $inquiries = [];
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->render('문의하기', $this->supportPage($inquiries));
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $files
+     */
+    public function submitSupportInquiry(array $payload, array $files): never
+    {
+        $user = $this->requireWebUser();
+
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/support');
+        }
+
+        try {
+            $result = $this->supportInquiryService->submit($user, $payload, $files);
+
+            if ($result['discordSent']) {
+                $this->flash('success', '문의가 접수되었습니다.');
+            } else {
+                $this->flash('warning', '문의 내용은 저장되었지만 Discord 알림 전송에 실패했습니다.');
+            }
+        } catch (Throwable $e) {
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->redirect('/support');
+    }
+
+    /**
+     * @param array<string, mixed> $query
+     */
+    public function adminSupportInquiries(array $query): never
+    {
+        $this->requireAdminUser();
+        $status = $this->supportStatusFromPayload($query);
+
+        try {
+            $inquiries = $this->supportInquiryService->listForAdmin($status);
+            $counts = $this->supportInquiryService->adminStatusCounts();
+        } catch (Throwable $e) {
+            $inquiries = [];
+            $counts = ['all' => 0, 'open' => 0, 'answered' => 0, 'closed' => 0];
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->render('문의 관리', $this->adminSupportInquiriesPage($inquiries, $status, $counts));
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function answerSupportInquiry(int $inquiryId, array $payload): never
+    {
+        $admin = $this->requireAdminUser();
+        $redirectPath = $this->adminSupportInquiriesPath($payload);
+
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect($redirectPath);
+        }
+
+        try {
+            $change = $this->supportInquiryService->answer($admin, $inquiryId, $payload);
+            $this->auditLogService->record(
+                (int)$admin['id'],
+                (int)$change['after']['user_id'],
+                'answer_support_inquiry',
+                'support_inquiry',
+                $inquiryId,
+                $this->supportInquiryForAudit($change['before']),
+                $this->supportInquiryForAudit($change['after']),
+                $this->requestContext()
+            );
+            $this->flash('success', '문의 답변을 저장했습니다.');
+        } catch (Throwable $e) {
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->redirect($redirectPath);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function closeSupportInquiry(int $inquiryId, array $payload): never
+    {
+        $admin = $this->requireAdminUser();
+        $redirectPath = $this->adminSupportInquiriesPath($payload);
+
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect($redirectPath);
+        }
+
+        try {
+            $change = $this->supportInquiryService->close($admin, $inquiryId);
+            $this->auditLogService->record(
+                (int)$admin['id'],
+                (int)$change['after']['user_id'],
+                'close_support_inquiry',
+                'support_inquiry',
+                $inquiryId,
+                $this->supportInquiryForAudit($change['before']),
+                $this->supportInquiryForAudit($change['after']),
+                $this->requestContext()
+            );
+            $this->flash('success', '문의를 종료 처리했습니다.');
+        } catch (Throwable $e) {
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->redirect($redirectPath);
     }
 
     /**
@@ -782,6 +913,106 @@ final class WebController
             </section>';
     }
 
+    /**
+     * @param array<int, array<string, mixed>> $inquiries
+     */
+    private function supportPage(array $inquiries): string
+    {
+        return sprintf(
+            '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
+                <div><h1 class="h3 mb-1">문의하기</h1><p class="text-secondary mb-0">오류, 개선 요청, 사용 중 불편한 점을 보내주세요.</p></div>
+                <a class="btn btn-outline-secondary" href="/work-entries">홈</a>
+            </div>
+            <section class="border rounded-2 bg-white p-3 mb-3">
+                <form class="row g-3" method="post" action="/support" enctype="multipart/form-data">
+                    %s
+                    <div class="col-12">
+                        <label class="form-label" for="subject">제목</label>
+                        <input class="form-control" id="subject" name="subject" maxlength="120" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="message">내용</label>
+                        <textarea class="form-control" id="message" name="message" rows="8" maxlength="5000" required></textarea>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="image">이미지 첨부</label>
+                        <input class="form-control" id="image" type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif">
+                        <div class="form-text">PNG, JPG, WEBP, GIF 이미지를 8MB 이하로 첨부할 수 있습니다. 이미지는 저장하지 않고 Discord 알림으로만 전송합니다. 일반 사용자는 기본적으로 1시간 3건, 하루 10건까지 문의할 수 있습니다.</div>
+                    </div>
+                    <div class="col-12"><button class="btn btn-primary" type="submit">문의 보내기</button></div>
+                </form>
+            </section>
+            <section class="border rounded-2 bg-white">
+                <div class="p-3 border-bottom">
+                    <h2 class="h5 mb-1">내 문의 내역</h2>
+                    <p class="text-secondary mb-0">답변이 등록되면 이 화면에서 확인할 수 있습니다.</p>
+                </div>
+                %s
+            </section>',
+            CsrfService::input(),
+            $this->supportInquiryList($inquiries)
+        );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $inquiries
+     */
+    private function supportInquiryList(array $inquiries): string
+    {
+        if ($inquiries === []) {
+            return '<div class="p-4 text-center text-secondary">아직 등록한 문의가 없습니다.</div>';
+        }
+
+        $items = '';
+
+        foreach ($inquiries as $inquiry) {
+            $newReplyBadge = (string)$inquiry['status'] === 'answered' && ($inquiry['user_read_at'] ?? null) === null
+                ? '<span class="badge text-bg-primary ms-2">새 답변</span>'
+                : '';
+            $reply = isset($inquiry['admin_reply']) && trim((string)$inquiry['admin_reply']) !== ''
+                ? '<div class="mt-3 p-3 rounded-2 bg-light"><div class="fw-semibold mb-2">답변' . $newReplyBadge . '</div><div class="text-break">' . nl2br($this->h((string)$inquiry['admin_reply'])) . '</div><div class="text-secondary small mt-2">' . $this->h((string)($inquiry['answered_at'] ?? '')) . '</div></div>'
+                : '<div class="mt-3 p-3 rounded-2 bg-light text-secondary">아직 답변이 등록되지 않았습니다.</div>';
+
+            $items .= sprintf(
+                '<article class="p-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                        <div>
+                            <h3 class="h6 mb-1">%s</h3>
+                            <div class="text-secondary small">%s · %s</div>
+                        </div>
+                        %s
+                    </div>
+                    <div class="mt-3 text-break">%s</div>
+                    %s
+                </article>',
+                $this->h((string)$inquiry['subject']),
+                $this->h('#' . (string)$inquiry['id']),
+                $this->h((string)$inquiry['created_at']),
+                $this->supportStatusBadge((string)$inquiry['status']),
+                nl2br($this->h((string)$inquiry['message'])),
+                $reply
+            );
+        }
+
+        return $items;
+    }
+
+    private function supportStatusBadge(string $status): string
+    {
+        $label = match ($status) {
+            'answered' => '답변 완료',
+            'closed' => '종료',
+            default => '접수',
+        };
+        $class = match ($status) {
+            'answered' => 'success',
+            'closed' => 'secondary',
+            default => 'warning text-dark',
+        };
+
+        return sprintf('<span class="badge text-bg-%s">%s</span>', $class, $this->h($label));
+    }
+
     private function privacyPage(): string
     {
         return
@@ -885,7 +1116,7 @@ final class WebController
     private function workEntriesHomePage(array $user, array $entries): string
     {
         $adminAction = ($user['role'] ?? '') === 'admin'
-            ? '<a class="btn btn-outline-primary" href="/admin/ai-users">AI 사용자 관리</a>'
+            ? '<a class="btn btn-outline-primary" href="/admin/ai-users">AI 사용자 관리</a><a class="btn btn-outline-primary" href="/admin/support-inquiries">문의 관리</a>'
             : '';
 
         return sprintf(
@@ -952,6 +1183,153 @@ final class WebController
             $this->adminAiUserRows($users),
             $this->adminAiUsageLogRows($logs)
         );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $inquiries
+     */
+    /**
+     * @param array{all: int, open: int, answered: int, closed: int} $counts
+     */
+    private function adminSupportInquiriesPage(array $inquiries, string $status, array $counts): string
+    {
+        return sprintf(
+            '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
+                <div><h1 class="h3 mb-1">문의 관리</h1><p class="text-secondary mb-0">사용자 문의를 확인하고 앱 내부 답변함으로 답변합니다.</p></div>
+                <a class="btn btn-outline-secondary" href="/work-entries">홈</a>
+            </div>
+            <section class="border rounded-2 bg-white">
+                <div class="d-flex justify-content-between align-items-start gap-3 p-3 border-bottom flex-wrap">
+                    <div>
+                        <h2 class="h5 mb-1">최근 문의</h2>
+                        <p class="text-secondary mb-0">이미지는 서버에 저장하지 않으며, Discord 전송용 메타데이터만 남습니다.</p>
+                    </div>
+                    %s
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead><tr><th>문의</th><th>사용자</th><th>상태</th><th>내용</th><th>첨부</th><th>처리</th></tr></thead>
+                        <tbody>%s</tbody>
+                    </table>
+                </div>
+            </section>',
+            $this->adminSupportFilterLinks($status, $counts),
+            $this->adminSupportInquiryRows($inquiries, $status)
+        );
+    }
+
+    /**
+     * @param array{all: int, open: int, answered: int, closed: int} $counts
+     */
+    private function adminSupportFilterLinks(string $activeStatus, array $counts): string
+    {
+        $items = [
+            'all' => '전체',
+            'open' => '접수',
+            'answered' => '답변 완료',
+            'closed' => '종료',
+        ];
+        $html = '<div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="문의 상태 필터">';
+
+        foreach ($items as $status => $label) {
+            $class = $status === $activeStatus ? 'btn-primary' : 'btn-outline-primary';
+            $href = $status === 'all' ? '/admin/support-inquiries' : '/admin/support-inquiries?status=' . rawurlencode($status);
+            $html .= sprintf(
+                '<a class="btn %s" href="%s">%s <span class="badge text-bg-light text-primary">%d</span></a>',
+                $class,
+                $this->h($href),
+                $this->h($label),
+                (int)($counts[$status] ?? 0)
+            );
+        }
+
+        return $html . '</div>';
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $inquiries
+     */
+    private function adminSupportInquiryRows(array $inquiries, string $activeStatus): string
+    {
+        if ($inquiries === []) {
+            return '<tr><td class="text-center text-secondary py-4" colspan="6">문의가 없습니다.</td></tr>';
+        }
+
+        $rows = '';
+
+        foreach ($inquiries as $inquiry) {
+            $image = isset($inquiry['image_filename']) && $inquiry['image_filename'] !== null
+                ? sprintf(
+                    '<div>%s</div><div class="text-secondary small">%s</div>',
+                    $this->h((string)$inquiry['image_filename']),
+                    $this->h($this->formatBytes((int)($inquiry['image_size'] ?? 0)))
+                )
+                : '<span class="text-secondary">없음</span>';
+            $discord = (int)($inquiry['discord_sent'] ?? 0) === 1
+                ? '<div class="text-success small">Discord 전송됨</div>'
+                : '<div class="text-warning small">Discord 미전송</div>';
+            $discordError = isset($inquiry['discord_error']) && trim((string)$inquiry['discord_error']) !== ''
+                ? '<div class="text-danger small text-break">' . $this->h((string)$inquiry['discord_error']) . '</div>'
+                : '';
+            $readState = isset($inquiry['user_read_at']) && $inquiry['user_read_at'] !== null
+                ? '<div class="text-success small">사용자 확인: ' . $this->h((string)$inquiry['user_read_at']) . '</div>'
+                : ((string)$inquiry['status'] === 'answered' ? '<div class="text-warning small">사용자 미확인</div>' : '');
+            $closeForm = (string)$inquiry['status'] === 'closed'
+                ? '<div class="text-secondary small">종료: ' . $this->h((string)($inquiry['closed_at'] ?? '')) . '</div>'
+                : sprintf(
+                    '<form class="mt-2" method="post" action="/admin/support-inquiries/%d/close" onsubmit="return confirm(\'문의를 종료 처리하시겠습니까?\')">%s<input type="hidden" name="status" value="%s"><button class="btn btn-sm btn-outline-secondary" type="submit">종료 처리</button></form>',
+                    (int)$inquiry['id'],
+                    CsrfService::input(),
+                    $this->h($activeStatus)
+                );
+
+            $rows .= sprintf(
+                '<tr>
+                    <td><div class="fw-semibold">%s</div><div class="text-secondary small">#%d · %s</div></td>
+                    <td><div>%s</div><div class="text-secondary small">%s</div></td>
+                    <td>%s</td>
+                    <td style="min-width:260px;white-space:normal"><div class="fw-semibold mb-1">%s</div><div class="text-break">%s</div></td>
+                    <td>%s%s%s</td>
+                    <td style="min-width:280px;white-space:normal">
+                        <form method="post" action="/admin/support-inquiries/%d/answer">
+                            %s
+                            <label class="visually-hidden" for="adminReply%d">답변</label>
+                            <textarea class="form-control form-control-sm mb-2" id="adminReply%d" name="adminReply" rows="4" maxlength="5000" required>%s</textarea>
+                            <input type="hidden" name="status" value="%s">
+                            <button class="btn btn-sm btn-primary" type="submit">%s</button>
+                            %s
+                        </form>
+                        %s
+                        %s
+                    </td>
+                </tr>',
+                $this->h((string)$inquiry['subject']),
+                (int)$inquiry['id'],
+                $this->h((string)$inquiry['created_at']),
+                $this->h((string)($inquiry['name'] ?? '')),
+                $this->h((string)($inquiry['email'] ?? '')),
+                $this->supportStatusBadge((string)$inquiry['status']),
+                $this->h((string)$inquiry['subject']),
+                nl2br($this->h((string)$inquiry['message'])),
+                $image,
+                $discord,
+                $discordError,
+                (int)$inquiry['id'],
+                CsrfService::input(),
+                (int)$inquiry['id'],
+                (int)$inquiry['id'],
+                $this->h((string)($inquiry['admin_reply'] ?? '')),
+                $this->h($activeStatus),
+                (string)$inquiry['status'] === 'answered' ? '답변 수정' : '답변 저장',
+                isset($inquiry['answered_at']) && $inquiry['answered_at'] !== null
+                    ? '<div class="text-secondary small mt-2">최근 답변: ' . $this->h((string)$inquiry['answered_at']) . '</div>'
+                    : '',
+                $readState,
+                $closeForm
+            );
+        }
+
+        return $rows;
     }
 
     /**
@@ -1880,8 +2258,15 @@ final class WebController
         try {
             return $this->authMiddleware->requireUser();
         } catch (RuntimeException $e) {
+            $loginPath = '/login';
+            $currentPath = $this->currentPath();
+
+            if ($this->isSafeAppReturnPath($currentPath)) {
+                $loginPath .= '?returnTo=' . rawurlencode($currentPath);
+            }
+
             $this->flash('danger', '로그인이 필요합니다.');
-            $this->redirect('/login');
+            $this->redirect($loginPath);
         }
     }
 
@@ -1948,6 +2333,7 @@ final class WebController
         $allowed = [
             '/work-entries',
             '/notification-settings',
+            '/support',
         ];
 
         foreach ($allowed as $prefix) {
@@ -2001,6 +2387,60 @@ final class WebController
     }
 
     /**
+     * @param array<string, mixed> $inquiry
+     * @return array<string, mixed>
+     */
+    private function supportInquiryForAudit(array $inquiry): array
+    {
+        return [
+            'id' => (int)$inquiry['id'],
+            'user_id' => (int)$inquiry['user_id'],
+            'status' => (string)$inquiry['status'],
+            'has_reply' => isset($inquiry['admin_reply']) && trim((string)$inquiry['admin_reply']) !== '',
+            'answered_by' => $inquiry['answered_by'] ?? null,
+            'answered_at' => $inquiry['answered_at'] ?? null,
+            'user_read_at' => $inquiry['user_read_at'] ?? null,
+            'closed_by' => $inquiry['closed_by'] ?? null,
+            'closed_at' => $inquiry['closed_at'] ?? null,
+        ];
+    }
+
+    private function supportUnreadAnswerCount(): int
+    {
+        $userId = SessionService::userId();
+
+        if ($userId === null) {
+            return 0;
+        }
+
+        try {
+            return $this->supportInquiryService->unreadAnswerCount(['id' => $userId]);
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function supportStatusFromPayload(array $payload): string
+    {
+        $status = $payload['status'] ?? 'all';
+
+        return is_string($status) ? $this->supportInquiryService->statusFilter($status) : 'all';
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function adminSupportInquiriesPath(array $payload): string
+    {
+        $status = $this->supportStatusFromPayload($payload);
+
+        return $status === 'all' ? '/admin/support-inquiries' : '/admin/support-inquiries?status=' . rawurlencode($status);
+    }
+
+    /**
      * @return array<string, string|null>
      */
     private function requestContext(): array
@@ -2050,11 +2490,15 @@ final class WebController
         $canonical = $this->absoluteUrl($meta['canonical'] ?? $this->currentPath());
         $ogImage = $this->absoluteUrl('/pwa-icons/og-image.png');
         $isLoggedIn = $hasSession && SessionService::userId() !== null;
+        $supportUnreadCount = $isLoggedIn ? $this->supportUnreadAnswerCount() : 0;
+        $supportBadge = $supportUnreadCount > 0
+            ? sprintf(' <span class="badge text-bg-danger">%d</span>', $supportUnreadCount)
+            : '';
         $navAction = $isLoggedIn
             ? '<a class="btn btn-sm btn-primary" href="/work-entries">내 기록</a>'
             : '<a class="btn btn-sm btn-primary" href="/login">로그인</a>';
         $internalLinks = $isLoggedIn
-            ? '<a class="btn btn-sm btn-outline-secondary" href="/health">상태</a><a class="btn btn-sm btn-outline-secondary" href="/index.html">AI 파서</a>'
+            ? '<a class="btn btn-sm btn-outline-secondary" href="/support">문의' . $supportBadge . '</a><a class="btn btn-sm btn-outline-secondary" href="/health">상태</a><a class="btn btn-sm btn-outline-secondary" href="/index.html">AI 파서</a>'
             : '';
         $publicLinks = '<a class="btn btn-sm btn-outline-secondary" href="/features">기능</a><a class="btn btn-sm btn-outline-secondary" href="/guide">가이드</a><a class="btn btn-sm btn-outline-secondary" href="/faq">FAQ</a>';
 
@@ -2181,6 +2625,7 @@ final class WebController
                     <a class="link-secondary text-decoration-none" href="/features">기능</a>
                     <a class="link-secondary text-decoration-none" href="/guide">가이드</a>
                     <a class="link-secondary text-decoration-none" href="/faq">FAQ</a>
+                    <a class="link-secondary text-decoration-none" href="/support">문의하기</a>
                     <a class="link-secondary text-decoration-none" href="/privacy">개인정보처리방침</a>
                     <a class="link-secondary text-decoration-none" href="/terms">이용약관</a>
                 </nav>
@@ -2260,6 +2705,15 @@ final class WebController
     private function formatMinutes(int $minutes): string
     {
         return sprintf('%d:%02d', intdiv($minutes, 60), $minutes % 60);
+    }
+
+    private function formatBytes(int $bytes): string
+    {
+        if ($bytes >= 1024 * 1024) {
+            return sprintf('%.1fMB', $bytes / 1024 / 1024);
+        }
+
+        return sprintf('%.1fKB', max(1, $bytes) / 1024);
     }
 
     private function minutesBetween(string $startAt, string $endAt): int

@@ -13,6 +13,7 @@ require_once __DIR__ . '/app/Services/AuthService.php';
 require_once __DIR__ . '/app/Services/DiscordService.php';
 require_once __DIR__ . '/app/Services/LoginAttemptService.php';
 require_once __DIR__ . '/app/Services/NotificationSettingService.php';
+require_once __DIR__ . '/app/Services/SupportInquiryService.php';
 require_once __DIR__ . '/app/Services/TelegramService.php';
 require_once __DIR__ . '/app/Services/WebhookRequestLogService.php';
 require_once __DIR__ . '/app/Services/WebhookService.php';
@@ -36,6 +37,7 @@ use App\Services\AuthService;
 use App\Services\DiscordService;
 use App\Services\LoginAttemptService;
 use App\Services\NotificationSettingService;
+use App\Services\SupportInquiryService;
 use App\Services\TelegramService;
 use App\Services\WebhookRequestLogService;
 use App\Services\WebhookService;
@@ -269,6 +271,7 @@ $webController = new WebController(
     new WorkEntryImportService($aiUsageService),
     new AdminAiUserService(),
     $notificationSettingService,
+    new SupportInquiryService(new DiscordService()),
     $auditLogService,
     $webhookService
 );
@@ -295,6 +298,14 @@ if ($path === '/privacy' && $routeMethod === 'GET') {
 
 if ($path === '/terms' && $routeMethod === 'GET') {
     $webController->terms();
+}
+
+if ($path === '/support' && $routeMethod === 'GET') {
+    $webController->supportForm();
+}
+
+if ($path === '/support' && $method === 'POST') {
+    $webController->submitSupportInquiry($_POST, $_FILES);
 }
 
 if ($path === '/robots.txt' && $routeMethod === 'GET') {
@@ -339,6 +350,18 @@ if ($path === '/admin/ai-users' && $routeMethod === 'GET') {
 
 if (preg_match('#^/admin/ai-users/([1-9][0-9]*)$#', $path, $matches) === 1 && $method === 'POST') {
     $webController->updateAdminAiUser((int)$matches[1], $_POST);
+}
+
+if ($path === '/admin/support-inquiries' && $routeMethod === 'GET') {
+    $webController->adminSupportInquiries($_GET);
+}
+
+if (preg_match('#^/admin/support-inquiries/([1-9][0-9]*)/answer$#', $path, $matches) === 1 && $method === 'POST') {
+    $webController->answerSupportInquiry((int)$matches[1], $_POST);
+}
+
+if (preg_match('#^/admin/support-inquiries/([1-9][0-9]*)/close$#', $path, $matches) === 1 && $method === 'POST') {
+    $webController->closeSupportInquiry((int)$matches[1], $_POST);
 }
 
 if ($path === '/notification-settings' && $routeMethod === 'GET') {

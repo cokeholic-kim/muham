@@ -38,6 +38,101 @@ final class DiscordService
     }
 
     /**
+     * @param array{path: string, name: string, mime: string}|null $file
+     * @return array{sent: bool, skipped: bool, error: string|null}
+     */
+    public function sendMessageWithFile(string $webhookUrl, string $message, ?array $file): array
+    {
+        if ($file === null) {
+            return $this->sendMessage($webhookUrl, $message);
+        }
+
+        $webhookUrl = trim($webhookUrl);
+
+        if ($webhookUrl === '') {
+            return [
+                'sent' => false,
+                'skipped' => true,
+                'error' => 'Discord webhook URL is missing.',
+            ];
+        }
+
+        if (!function_exists('curl_init') || !class_exists(\CURLFile::class)) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => 'Discord file upload requires the PHP cURL extension.',
+            ];
+        }
+
+        if (!is_file($file['path']) || !is_readable($file['path'])) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => 'Discord upload file is not readable.',
+            ];
+        }
+
+        $payload = json_encode(['content' => $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        if ($payload === false) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => 'Discord payload encoding failed.',
+            ];
+        }
+
+        $curl = curl_init($webhookUrl);
+
+        if ($curl === false) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => 'Discord cURL initialization failed.',
+            ];
+        }
+
+        curl_setopt_array($curl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => [
+                'payload_json' => $payload,
+                'files[0]' => new \CURLFile($file['path'], $file['mime'], $file['name']),
+            ],
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 30,
+        ]);
+
+        $response = curl_exec($curl);
+        $statusCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($curl);
+        curl_close($curl);
+
+        if ($response === false) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => 'Discord cURL request failed: ' . ($curlError !== '' ? $curlError : 'unknown error'),
+            ];
+        }
+
+        if ($statusCode < 200 || $statusCode >= 300) {
+            return [
+                'sent' => false,
+                'skipped' => false,
+                'error' => sprintf('Discord webhook returned HTTP %d: %s', $statusCode, $this->responseSnippet((string)$response)),
+            ];
+        }
+
+        return [
+            'sent' => true,
+            'skipped' => false,
+            'error' => null,
+        ];
+    }
+
+    /**
      * @return array{sent: bool, skipped: bool, error: string|null}
      */
     private function sendWithCurl(string $webhookUrl, string $payload): array
