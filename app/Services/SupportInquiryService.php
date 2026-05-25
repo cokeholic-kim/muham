@@ -184,6 +184,51 @@ final class SupportInquiryService
 
     /**
      * @param array<string, mixed> $user
+     * @return array<int, array<string, mixed>>
+     */
+    public function messagesForUser(array $user, int $inquiryId): array
+    {
+        $inquiry = Database::fetchOne(
+            'SELECT id, user_id, message, created_at
+            FROM support_inquiries
+            WHERE id = :id
+              AND user_id = :user_id
+            LIMIT 1',
+            [
+                'id' => $inquiryId,
+                'user_id' => (int)$user['id'],
+            ]
+        );
+
+        if (!is_array($inquiry)) {
+            throw new RuntimeException('문의를 찾을 수 없습니다.');
+        }
+
+        return $this->conversationMessages($inquiry);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function messagesForAdmin(int $inquiryId): array
+    {
+        $inquiry = Database::fetchOne(
+            'SELECT id, user_id, message, created_at
+            FROM support_inquiries
+            WHERE id = :id
+            LIMIT 1',
+            ['id' => $inquiryId]
+        );
+
+        if (!is_array($inquiry)) {
+            throw new RuntimeException('문의를 찾을 수 없습니다.');
+        }
+
+        return $this->conversationMessages($inquiry);
+    }
+
+    /**
+     * @param array<string, mixed> $user
      * @param array<string, mixed> $payload
      * @param array<string, mixed> $files
      * @return array{inquiryId: int, discordSent: bool, discordError: string|null}
@@ -218,6 +263,45 @@ final class SupportInquiryService
     }
 
     /**
+     * @param array<string, mixed> $user
+     * @param array<string, mixed> $payload
+     * @return array{before: array<string, mixed>, after: array<string, mixed>}
+     */
+    public function addUserMessage(array $user, int $inquiryId, array $payload): array
+    {
+        $message = $this->message($payload['message'] ?? null);
+        $userId = (int)$user['id'];
+
+        return Database::transaction(function (PDO $pdo) use ($inquiryId, $message, $userId): array {
+            $before = $this->findForUpdate($pdo, $inquiryId);
+
+            if ((int)$before['user_id'] !== $userId) {
+                throw new RuntimeException('문의를 찾을 수 없습니다.');
+            }
+
+            $this->assertInquiryIsOpen((string)$before['status']);
+            $this->insertMessage($pdo, $inquiryId, $userId, 'user', $message);
+
+            $statement = $pdo->prepare(
+                'UPDATE support_inquiries
+                SET status = :status,
+                    user_read_at = NULL,
+                    updated_at = NOW()
+                WHERE id = :id'
+            );
+            $statement->execute([
+                'id' => $inquiryId,
+                'status' => 'open',
+            ]);
+
+            return [
+                'before' => $this->normalizeInquiry($before),
+                'after' => $this->normalizeInquiry($this->findForUpdate($pdo, $inquiryId)),
+            ];
+        });
+    }
+
+    /**
      * @param array<string, mixed> $admin
      * @param array<string, mixed> $payload
      * @return array{before: array<string, mixed>, after: array<string, mixed>}
@@ -229,6 +313,9 @@ final class SupportInquiryService
 
         return Database::transaction(function (PDO $pdo) use ($inquiryId, $reply, $adminId): array {
             $before = $this->findForUpdate($pdo, $inquiryId);
+            $this->assertInquiryIsOpen((string)$before['status']);
+            $this->insertMessage($pdo, $inquiryId, $adminId, 'admin', $reply);
+
             $statement = $pdo->prepare(
                 'UPDATE support_inquiries
                 SET status = :status,
@@ -327,6 +414,13 @@ final class SupportInquiryService
         }
 
         return $value;
+    }
+
+    private function assertInquiryIsOpen(string $status): void
+    {
+        if ($status === 'closed') {
+            throw new InvalidArgumentException('종료된 문의에는 추가 메시지를 남길 수 없습니다.');
+        }
     }
 
     public function statusFilter(string $status): string
@@ -490,6 +584,74 @@ final class SupportInquiryService
                 'mime' => $image['mime'],
             ]
         );
+    }
+
+    private function insertMessage(PDO $pdo, int $inquiryId, int $senderUserId, string $senderRole, string $message): void
+    {
+        $statement = $pdo->prepare(
+            'INSERT INTO support_inquiry_messages (
+                inquiry_id,
+                sender_user_id,
+                sender_role,
+                message
+            ) VALUES (
+                :inquiry_id,
+                :sender_user_id,
+                :sender_role,
+                :message
+            )'
+        );
+        $statement->execute([
+            'inquiry_id' => $inquiryId,
+            'sender_user_id' => $senderUserId,
+            'sender_role' => $senderRole,
+            'message' => $message,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $inquiry
+     * @return array<int, array<string, mixed>>
+     */
+    private function conversationMessages(array $inquiry): array
+    {
+        $messages = [[
+            'id' => 0,
+            'inquiry_id' => (int)$inquiry['id'],
+            'sender_user_id' => (int)$inquiry['user_id'],
+            'sender_role' => 'user',
+            'message' => (string)$inquiry['message'],
+            'created_at' => (string)$inquiry['created_at'],
+            'is_initial' => true,
+        ]];
+
+        $statement = Database::connection()->prepare(
+            'SELECT
+                id,
+                inquiry_id,
+                sender_user_id,
+                sender_role,
+                message,
+                created_at
+            FROM support_inquiry_messages
+            WHERE inquiry_id = :inquiry_id
+            ORDER BY created_at ASC, id ASC'
+        );
+        $statement->execute(['inquiry_id' => (int)$inquiry['id']]);
+
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $message) {
+            $messages[] = [
+                'id' => (int)$message['id'],
+                'inquiry_id' => (int)$message['inquiry_id'],
+                'sender_user_id' => (int)$message['sender_user_id'],
+                'sender_role' => (string)$message['sender_role'],
+                'message' => (string)$message['message'],
+                'created_at' => (string)$message['created_at'],
+                'is_initial' => false,
+            ];
+        }
+
+        return $messages;
     }
 
     private function safeFilename(string $name, string $extension): string

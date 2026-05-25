@@ -312,6 +312,10 @@ if ($path === '/support' && $method === 'POST') {
     $webController->submitSupportInquiry($_POST, $_FILES);
 }
 
+if (preg_match('#^/support/([1-9][0-9]*)/messages$#', $path, $matches) === 1 && $method === 'POST') {
+    $webController->addSupportInquiryMessage((int)$matches[1], $_POST);
+}
+
 if ($path === '/robots.txt' && $routeMethod === 'GET') {
     $webController->robotsTxt();
 }
