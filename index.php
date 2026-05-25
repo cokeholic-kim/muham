@@ -8,6 +8,7 @@ require_once __DIR__ . '/app/Database/Database.php';
 require_once __DIR__ . '/app/Database/HealthCheck.php';
 require_once __DIR__ . '/app/Services/AdminAiUserService.php';
 require_once __DIR__ . '/app/Services/AiUsageService.php';
+require_once __DIR__ . '/app/Services/AppSettingService.php';
 require_once __DIR__ . '/app/Services/AuditLogService.php';
 require_once __DIR__ . '/app/Services/AuthService.php';
 require_once __DIR__ . '/app/Services/DiscordService.php';
@@ -31,6 +32,7 @@ use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
 use App\Services\AdminAiUserService;
+use App\Services\AppSettingService;
 use App\Services\AuditLogService;
 use App\Services\AiUsageService;
 use App\Services\AuthService;
@@ -256,6 +258,7 @@ $loginAttemptService = new LoginAttemptService();
 $authMiddleware = new AuthMiddleware($authService);
 $requestContext = requestContext();
 $aiUsageService = new AiUsageService();
+$appSettingService = new AppSettingService();
 $notificationSettingService = new NotificationSettingService();
 $webhookService = new WebhookService(
     $auditLogService,
@@ -270,8 +273,9 @@ $webController = new WebController(
     new WorkEntryService($auditLogService, $requestContext),
     new WorkEntryImportService($aiUsageService),
     new AdminAiUserService(),
+    $appSettingService,
     $notificationSettingService,
-    new SupportInquiryService(new DiscordService()),
+    new SupportInquiryService(new DiscordService(), $appSettingService),
     $auditLogService,
     $webhookService
 );
@@ -354,6 +358,10 @@ if (preg_match('#^/admin/ai-users/([1-9][0-9]*)$#', $path, $matches) === 1 && $m
 
 if ($path === '/admin/support-inquiries' && $routeMethod === 'GET') {
     $webController->adminSupportInquiries($_GET);
+}
+
+if ($path === '/admin/support-inquiries/settings' && $method === 'POST') {
+    $webController->updateSupportInquirySettings($_POST);
 }
 
 if (preg_match('#^/admin/support-inquiries/([1-9][0-9]*)/answer$#', $path, $matches) === 1 && $method === 'POST') {

@@ -12,8 +12,6 @@ use RuntimeException;
 final class SupportInquiryService
 {
     private const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-    private const DEFAULT_MAX_PER_HOUR = 3;
-    private const DEFAULT_MAX_PER_DAY = 10;
     private const IMAGE_MIME_EXTENSIONS = [
         'image/png' => 'png',
         'image/jpeg' => 'jpg',
@@ -21,8 +19,10 @@ final class SupportInquiryService
         'image/gif' => 'gif',
     ];
 
-    public function __construct(private readonly DiscordService $discordService)
-    {
+    public function __construct(
+        private readonly DiscordService $discordService,
+        private readonly AppSettingService $appSettingService
+    ) {
     }
 
     /**
@@ -346,8 +346,9 @@ final class SupportInquiryService
         }
 
         $userId = (int)$user['id'];
-        $hourLimit = $this->limitFromEnv('SUPPORT_MAX_PER_HOUR', self::DEFAULT_MAX_PER_HOUR);
-        $dayLimit = $this->limitFromEnv('SUPPORT_MAX_PER_DAY', self::DEFAULT_MAX_PER_DAY);
+        $limits = $this->appSettingService->supportRateLimits();
+        $hourLimit = $limits['maxPerHour'];
+        $dayLimit = $limits['maxPerDay'];
 
         if ($hourLimit > 0) {
             $hourCount = $this->countSince($userId, '1 HOUR');
@@ -364,17 +365,6 @@ final class SupportInquiryService
                 throw new InvalidArgumentException(sprintf('문의는 하루에 최대 %d건까지 보낼 수 있습니다.', $dayLimit));
             }
         }
-    }
-
-    private function limitFromEnv(string $key, int $default): int
-    {
-        $value = trim(Env::get($key, (string)$default));
-
-        if ($value === '' || !ctype_digit($value)) {
-            return $default;
-        }
-
-        return min(1000, (int)$value);
     }
 
     private function countSince(int $userId, string $interval): int

@@ -7,6 +7,7 @@ use App\Config\Env;
 use App\Database\HealthCheck;
 use App\Middleware\AuthMiddleware;
 use App\Services\AdminAiUserService;
+use App\Services\AppSettingService;
 use App\Services\AuditLogService;
 use App\Services\CsrfService;
 use App\Services\NotificationSettingService;
@@ -27,6 +28,7 @@ final class WebController
         private readonly WorkEntryService $workEntryService,
         private readonly WorkEntryImportService $workEntryImportService,
         private readonly AdminAiUserService $adminAiUserService,
+        private readonly AppSettingService $appSettingService,
         private readonly NotificationSettingService $notificationSettingService,
         private readonly SupportInquiryService $supportInquiryService,
         private readonly AuditLogService $auditLogService,
@@ -324,13 +326,47 @@ final class WebController
         try {
             $inquiries = $this->supportInquiryService->listForAdmin($status);
             $counts = $this->supportInquiryService->adminStatusCounts();
+            $rateLimits = $this->appSettingService->supportRateLimits();
         } catch (Throwable $e) {
             $inquiries = [];
             $counts = ['all' => 0, 'open' => 0, 'answered' => 0, 'closed' => 0];
+            $rateLimits = ['maxPerHour' => 3, 'maxPerDay' => 10];
             $this->flash('danger', $e->getMessage());
         }
 
-        $this->render('문의 관리', $this->adminSupportInquiriesPage($inquiries, $status, $counts));
+        $this->render('문의 관리', $this->adminSupportInquiriesPage($inquiries, $status, $counts, $rateLimits));
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function updateSupportInquirySettings(array $payload): never
+    {
+        $admin = $this->requireAdminUser();
+
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/admin/support-inquiries');
+        }
+
+        try {
+            $change = $this->appSettingService->updateSupportRateLimits($admin, $payload);
+            $this->auditLogService->record(
+                (int)$admin['id'],
+                null,
+                'update_support_rate_limits',
+                'app_setting',
+                null,
+                $change['before'],
+                $change['after'],
+                $this->requestContext()
+            );
+            $this->flash('success', '문의 작성 제한 설정을 저장했습니다.');
+        } catch (Throwable $e) {
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->redirect('/admin/support-inquiries');
     }
 
     /**
@@ -405,15 +441,21 @@ final class WebController
     public function workEntries(array $query): never
     {
         $user = $this->requireWebUser();
+        $monthFrom = date('Y-m-01');
+        $monthTo = date('Y-m-d');
 
         try {
             $entries = $this->workEntryService->recent($user, 10);
+            $summary = $this->workEntryService->summary($user, ['from' => $monthFrom, 'to' => $monthTo]);
+            $notificationSetting = $this->notificationSettingService->findForUser($user);
         } catch (Throwable $e) {
             $entries = [];
+            $summary = $this->emptySummary($monthFrom, $monthTo);
+            $notificationSetting = null;
             $this->flash('danger', $e->getMessage());
         }
 
-        $this->render('근무 기록', $this->workEntriesHomePage($user, $entries));
+        $this->render('근무 기록', $this->workEntriesHomePage($user, $entries, $summary, $notificationSetting));
     }
 
     public function createWorkEntryForm(): never
@@ -937,7 +979,7 @@ final class WebController
                     <div class="col-12">
                         <label class="form-label" for="image">이미지 첨부</label>
                         <input class="form-control" id="image" type="file" name="image" accept="image/png,image/jpeg,image/webp,image/gif">
-                        <div class="form-text">PNG, JPG, WEBP, GIF 이미지를 8MB 이하로 첨부할 수 있습니다. 이미지는 저장하지 않고 Discord 알림으로만 전송합니다. 일반 사용자는 기본적으로 1시간 3건, 하루 10건까지 문의할 수 있습니다.</div>
+                        <div class="form-text">PNG, JPG, WEBP, GIF 이미지를 8MB 이하로 첨부할 수 있습니다. 이미지는 저장하지 않고 Discord 알림으로만 전송합니다. 일반 사용자는 관리자 설정에 따라 문의 등록 횟수가 제한될 수 있습니다.</div>
                     </div>
                     <div class="col-12"><button class="btn btn-primary" type="submit">문의 보내기</button></div>
                 </form>
@@ -1112,8 +1154,10 @@ final class WebController
     /**
      * @param array<string, mixed> $user
      * @param array<int, array<string, mixed>> $entries
+     * @param array<string, mixed> $summary
+     * @param array<string, mixed>|null $notificationSetting
      */
-    private function workEntriesHomePage(array $user, array $entries): string
+    private function workEntriesHomePage(array $user, array $entries, array $summary, ?array $notificationSetting): string
     {
         $adminAction = ($user['role'] ?? '') === 'admin'
             ? '<a class="btn btn-outline-primary" href="/admin/ai-users">AI 사용자 관리</a><a class="btn btn-outline-primary" href="/admin/support-inquiries">문의 관리</a>'
@@ -1124,12 +1168,18 @@ final class WebController
                 <div><h1 class="h3 mb-1">근무 기록</h1><p class="text-secondary mb-0">%s · %s</p></div>
                 <div class="d-flex gap-2 flex-wrap">%s<form method="post" action="/logout">%s<button class="btn btn-outline-secondary" type="submit">로그아웃</button></form></div>
             </div>
-            <div class="row g-3 mb-3">
-                <div class="col-12 col-md-3"><a class="btn btn-success w-100 py-3" href="/work-entries/create">근무시간 입력</a></div>
-                <div class="col-12 col-md-3"><a class="btn btn-primary w-100 py-3" href="/work-entries/search">근무시간 조회</a></div>
-                <div class="col-12 col-md-3"><a class="btn btn-outline-primary w-100 py-3" href="/work-entries/import">일괄 입력</a></div>
-                <div class="col-12 col-md-3"><a class="btn btn-dark w-100 py-3" href="/notification-settings">정기 발송 설정</a></div>
-            </div>
+            <section class="row g-3 mb-3">
+                %s
+            </section>
+            <section class="border rounded-2 bg-white p-3 mb-3">
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+                    <div><h2 class="h5 mb-1">빠른 작업</h2><p class="text-secondary mb-0">자주 쓰는 근무시간 관리 기능입니다.</p></div>
+                    <a class="btn btn-sm btn-outline-secondary" href="/work-entries/search">이번 달 전체 보기</a>
+                </div>
+                <div class="row g-3">
+                    %s
+                </div>
+            </section>
             <section class="border rounded-2 bg-white">
                 <div class="d-flex justify-content-between align-items-center gap-3 p-3 border-bottom flex-wrap">
                     <h2 class="h5 mb-0">최근 근무 기록</h2>
@@ -1141,8 +1191,85 @@ final class WebController
             $this->h((string)$user['email']),
             $adminAction,
             CsrfService::input(),
+            $this->dashboardSummaryCards($summary, $notificationSetting),
+            $this->quickActionCards(),
             $this->entriesTable($entries, '/work-entries')
         );
+    }
+
+    /**
+     * @param array<string, mixed> $summary
+     * @param array<string, mixed>|null $notificationSetting
+     */
+    private function dashboardSummaryCards(array $summary, ?array $notificationSetting): string
+    {
+        $cards = [
+            ['이번 달 실근무', $this->formatMinutes((int)($summary['work_minutes'] ?? 0)), '저장된 근무시간 기준'],
+            ['근무일', (string)(int)($summary['total_work_days'] ?? 0) . '일', '이번 달 출근한 날짜'],
+            ['기록 수', (string)(int)($summary['total_entries'] ?? 0) . '건', '활성 근무 기록'],
+            ['정기 발송', $this->notificationSettingStatus($notificationSetting), '요약 메시지 설정'],
+        ];
+        $html = '';
+
+        foreach ($cards as [$label, $value, $help]) {
+            $html .= sprintf(
+                '<div class="col-6 col-lg-3">
+                    <div class="border rounded-2 bg-white p-3 h-100">
+                        <div class="text-secondary small mb-1">%s</div>
+                        <div class="fs-4 fw-semibold">%s</div>
+                        <div class="text-secondary small mt-1">%s</div>
+                    </div>
+                </div>',
+                $this->h($label),
+                $this->h($value),
+                $this->h($help)
+            );
+        }
+
+        return $html;
+    }
+
+    /**
+     * @param array<string, mixed>|null $notificationSetting
+     */
+    private function notificationSettingStatus(?array $notificationSetting): string
+    {
+        if ($notificationSetting === null) {
+            return '미설정';
+        }
+
+        return (int)($notificationSetting['is_active'] ?? 0) === 1 ? '활성' : '비활성';
+    }
+
+    private function quickActionCards(): string
+    {
+        $actions = [
+            ['/work-entries/create', '근무시간 입력', '근무일, 시작·종료 시간, 휴게 시간을 저장합니다.'],
+            ['/work-entries/search', '근무시간 조회', '이번 달 또는 원하는 기간의 합계와 기록을 확인합니다.'],
+            ['/work-entries/import', '일괄 입력', '여러 줄의 근무 메모를 한 번에 기록으로 바꿉니다.'],
+            ['/notification-settings', '정기 발송 설정', '근무 요약을 텔레그램이나 디스코드로 보냅니다.'],
+        ];
+        $html = '';
+
+        foreach ($actions as [$href, $title, $description]) {
+            $html .= sprintf(
+                '<div class="col-12 col-md-6 col-lg-3">
+                    <a class="d-flex flex-column border rounded-2 p-3 h-100 text-decoration-none text-body" href="%s">
+                        <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+                            <h3 class="h6 mb-0">%s</h3>
+                            <span class="text-primary fw-semibold" aria-hidden="true">&gt;</span>
+                        </div>
+                        <p class="text-secondary small mb-3">%s</p>
+                        <span class="btn btn-sm btn-outline-primary align-self-end mt-auto">열기</span>
+                    </a>
+                </div>',
+                $this->h($href),
+                $this->h($title),
+                $this->h($description)
+            );
+        }
+
+        return $html;
     }
 
     /**
@@ -1186,18 +1313,17 @@ final class WebController
     }
 
     /**
-     * @param array<int, array<string, mixed>> $inquiries
-     */
-    /**
      * @param array{all: int, open: int, answered: int, closed: int} $counts
+     * @param array{maxPerHour: int, maxPerDay: int} $rateLimits
      */
-    private function adminSupportInquiriesPage(array $inquiries, string $status, array $counts): string
+    private function adminSupportInquiriesPage(array $inquiries, string $status, array $counts, array $rateLimits): string
     {
         return sprintf(
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
                 <div><h1 class="h3 mb-1">문의 관리</h1><p class="text-secondary mb-0">사용자 문의를 확인하고 앱 내부 답변함으로 답변합니다.</p></div>
                 <a class="btn btn-outline-secondary" href="/work-entries">홈</a>
             </div>
+            %s
             <section class="border rounded-2 bg-white">
                 <div class="d-flex justify-content-between align-items-start gap-3 p-3 border-bottom flex-wrap">
                     <div>
@@ -1213,8 +1339,41 @@ final class WebController
                     </table>
                 </div>
             </section>',
+            $this->supportRateLimitSettingsPanel($rateLimits),
             $this->adminSupportFilterLinks($status, $counts),
             $this->adminSupportInquiryRows($inquiries, $status)
+        );
+    }
+
+    /**
+     * @param array{maxPerHour: int, maxPerDay: int} $rateLimits
+     */
+    private function supportRateLimitSettingsPanel(array $rateLimits): string
+    {
+        return sprintf(
+            '<section class="border rounded-2 bg-white p-3 mb-3">
+                <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                    <div>
+                        <h2 class="h5 mb-1">문의 작성 제한</h2>
+                        <p class="text-secondary mb-0">일반 사용자가 문의를 과도하게 등록하지 않도록 제한합니다. 0은 제한 없음입니다.</p>
+                    </div>
+                    <form class="d-flex align-items-end gap-2 flex-wrap" method="post" action="/admin/support-inquiries/settings">
+                        %s
+                        <div>
+                            <label class="form-label small mb-1" for="supportMaxPerHour">1시간</label>
+                            <input class="form-control form-control-sm text-end" id="supportMaxPerHour" type="number" min="0" max="1000" name="supportMaxPerHour" value="%d" required style="width: 96px">
+                        </div>
+                        <div>
+                            <label class="form-label small mb-1" for="supportMaxPerDay">하루</label>
+                            <input class="form-control form-control-sm text-end" id="supportMaxPerDay" type="number" min="0" max="1000" name="supportMaxPerDay" value="%d" required style="width: 96px">
+                        </div>
+                        <button class="btn btn-sm btn-primary" type="submit">저장</button>
+                    </form>
+                </div>
+            </section>',
+            CsrfService::input(),
+            (int)$rateLimits['maxPerHour'],
+            (int)$rateLimits['maxPerDay']
         );
     }
 
@@ -2501,6 +2660,10 @@ final class WebController
             ? '<a class="btn btn-sm btn-outline-secondary" href="/support">문의' . $supportBadge . '</a><a class="btn btn-sm btn-outline-secondary" href="/health">상태</a><a class="btn btn-sm btn-outline-secondary" href="/index.html">AI 파서</a>'
             : '';
         $publicLinks = '<a class="btn btn-sm btn-outline-secondary" href="/features">기능</a><a class="btn btn-sm btn-outline-secondary" href="/guide">가이드</a><a class="btn btn-sm btn-outline-secondary" href="/faq">FAQ</a>';
+        $mobileActionBar = $isLoggedIn && $this->showMobileActionBar($this->currentPath())
+            ? $this->mobileActionBar()
+            : '';
+        $bodyClass = $mobileActionBar !== '' ? ' class="has-mobile-actions"' : '';
 
         http_response_code(200);
         $this->securityHeaders();
@@ -2535,10 +2698,11 @@ final class WebController
         echo $this->structuredData($fullTitle, $description, $canonical);
         echo $this->googleAnalyticsSnippet($title);
         echo '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">';
-        echo '<style>body{background:#f6f7f9}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}.display-5{letter-spacing:0}.lead{line-height:1.65}.site-footer{border-top:1px solid #dee2e6;background:#fff}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
-        echo '</head><body><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/">머함</a><div class="d-flex gap-2 flex-wrap">' . $publicLinks . $internalLinks . $navAction . '</div></div></nav>';
+        echo '<style>html{min-height:100%}body{background:#f6f7f9;min-height:100vh;display:flex;flex-direction:column}main{flex:1 0 auto}.navbar{border-bottom:1px solid #dee2e6}.container-narrow{max-width:1120px}.table th,.table td{white-space:nowrap}.table td:nth-child(6){white-space:normal;min-width:160px}.display-5{letter-spacing:0}.lead{line-height:1.65}.site-footer{border-top:1px solid #dee2e6;background:#fff;flex-shrink:0}.mobile-action-bar{display:none}@media(max-width:767.98px){.has-mobile-actions{padding-bottom:78px}.mobile-action-bar{display:block;position:fixed;left:0;right:0;bottom:0;z-index:1030;background:#fff;border-top:1px solid #dee2e6;padding:8px 10px calc(8px + env(safe-area-inset-bottom));box-shadow:0 -6px 18px rgba(15,23,42,.08)}.mobile-action-bar .btn{min-height:44px;font-size:.82rem}}@media(max-width:575.98px){.container-narrow{padding-left:14px;padding-right:14px}.table th,.table td{font-size:.875rem}}</style>';
+        echo '</head><body' . $bodyClass . '><nav class="navbar bg-white"><div class="container container-narrow"><a class="navbar-brand fw-semibold" href="/">머함</a><div class="d-flex gap-2 flex-wrap">' . $publicLinks . $internalLinks . $navAction . '</div></div></nav>';
         echo '<main class="container container-narrow py-4">' . $flashHtml . $body . '</main>';
         echo $this->footerHtml();
+        echo $mobileActionBar;
         echo '<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>';
         echo '<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js?v=2"); }); }</script>';
         echo '</body></html>';
@@ -2618,7 +2782,7 @@ final class WebController
 
     private function footerHtml(): string
     {
-        return '<footer class="site-footer py-4 mt-4">
+        return '<footer class="site-footer py-4">
             <div class="container container-narrow d-flex justify-content-between align-items-center gap-3 flex-wrap">
                 <div class="text-secondary small">머함 · 알바·파트타임 근무시간 관리</div>
                 <nav class="d-flex gap-3 flex-wrap small" aria-label="하단 링크">
@@ -2631,6 +2795,38 @@ final class WebController
                 </nav>
             </div>
         </footer>';
+    }
+
+    private function showMobileActionBar(string $path): bool
+    {
+        foreach (['/work-entries', '/notification-settings', '/support', '/admin'] as $prefix) {
+            if ($path === $prefix || str_starts_with($path, $prefix . '/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function mobileActionBar(): string
+    {
+        $items = [
+            ['/work-entries/create', '입력'],
+            ['/work-entries/search', '조회'],
+            ['/work-entries/import', '일괄'],
+            ['/notification-settings', '설정'],
+        ];
+        $html = '<nav class="mobile-action-bar" aria-label="빠른 작업"><div class="container container-narrow"><div class="row g-2">';
+
+        foreach ($items as [$href, $label]) {
+            $html .= sprintf(
+                '<div class="col-3"><a class="btn btn-outline-primary w-100 px-1" href="%s">%s</a></div>',
+                $this->h($href),
+                $this->h($label)
+            );
+        }
+
+        return $html . '</div></div></nav>';
     }
 
     private function flash(string $type, string $message): void
