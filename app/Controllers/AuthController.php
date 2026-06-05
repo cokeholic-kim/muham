@@ -7,6 +7,7 @@ use App\Middleware\AuthMiddleware;
 use App\Services\AuditLogService;
 use App\Services\AuthService;
 use App\Services\LoginAttemptService;
+use App\Services\RememberMeService;
 use App\Services\SessionService;
 use InvalidArgumentException;
 use RuntimeException;
@@ -18,6 +19,7 @@ final class AuthController
         private readonly AuthMiddleware $authMiddleware,
         private readonly AuditLogService $auditLogService,
         private readonly LoginAttemptService $loginAttemptService,
+        private readonly RememberMeService $rememberMeService,
         /** @var array<string, string|null> */
         private readonly array $requestContext
     ) {
@@ -115,6 +117,11 @@ final class AuthController
 
         $this->loginAttemptService->recordSuccess($email, $sourceIp);
         SessionService::login((int)$user['id'], (string)$user['role']);
+
+        if ($this->rememberRequested($payload)) {
+            $this->rememberMeService->issueToken($user);
+        }
+
         $this->auditLogService->record(
             (int)$user['id'],
             (int)$user['id'],
@@ -127,6 +134,7 @@ final class AuthController
                 'email' => $user['email'],
                 'role' => $user['role'],
                 'result' => 'success',
+                'remember' => $this->rememberRequested($payload),
             ],
             $this->requestContext
         );
@@ -170,6 +178,7 @@ final class AuthController
             );
         }
 
+        $this->rememberMeService->clearCurrentToken();
         SessionService::logout();
 
         return [
@@ -205,5 +214,13 @@ final class AuthController
         }
 
         return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function rememberRequested(array $payload): bool
+    {
+        return isset($payload['rememberMe']) && (string)$payload['rememberMe'] === '1';
     }
 }

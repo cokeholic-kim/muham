@@ -14,6 +14,7 @@ require_once __DIR__ . '/app/Services/AuthService.php';
 require_once __DIR__ . '/app/Services/DiscordService.php';
 require_once __DIR__ . '/app/Services/LoginAttemptService.php';
 require_once __DIR__ . '/app/Services/NotificationSettingService.php';
+require_once __DIR__ . '/app/Services/RememberMeService.php';
 require_once __DIR__ . '/app/Services/SupportInquiryService.php';
 require_once __DIR__ . '/app/Services/TelegramService.php';
 require_once __DIR__ . '/app/Services/WebhookRequestLogService.php';
@@ -39,6 +40,7 @@ use App\Services\AuthService;
 use App\Services\DiscordService;
 use App\Services\LoginAttemptService;
 use App\Services\NotificationSettingService;
+use App\Services\RememberMeService;
 use App\Services\SupportInquiryService;
 use App\Services\TelegramService;
 use App\Services\WebhookRequestLogService;
@@ -255,6 +257,7 @@ if ($path === '/favicon.ico') {
 $authService = new AuthService();
 $auditLogService = new AuditLogService();
 $loginAttemptService = new LoginAttemptService();
+$rememberMeService = new RememberMeService();
 $authMiddleware = new AuthMiddleware($authService);
 $requestContext = requestContext();
 $aiUsageService = new AiUsageService();
@@ -268,7 +271,7 @@ $webhookService = new WebhookService(
     $requestContext
 );
 $webController = new WebController(
-    new AuthController($authService, $authMiddleware, $auditLogService, $loginAttemptService, $requestContext),
+    new AuthController($authService, $authMiddleware, $auditLogService, $loginAttemptService, $rememberMeService, $requestContext),
     $authMiddleware,
     new WorkEntryService($auditLogService, $requestContext),
     new WorkEntryImportService($aiUsageService),
@@ -279,6 +282,8 @@ $webController = new WebController(
     $auditLogService,
     $webhookService
 );
+
+$rememberMeService->attemptAutoLogin($authService, $auditLogService, $requestContext);
 
 if ($path === '/' && $routeMethod === 'GET') {
     $webController->home();
@@ -358,6 +363,10 @@ if ($path === '/admin/ai-users' && $routeMethod === 'GET') {
 
 if (preg_match('#^/admin/ai-users/([1-9][0-9]*)$#', $path, $matches) === 1 && $method === 'POST') {
     $webController->updateAdminAiUser((int)$matches[1], $_POST);
+}
+
+if (preg_match('#^/admin/ai-users/([1-9][0-9]*)/revoke-access$#', $path, $matches) === 1 && $method === 'POST') {
+    $webController->revokeAdminUserAccess((int)$matches[1], $_POST);
 }
 
 if ($path === '/admin/support-inquiries' && $routeMethod === 'GET') {

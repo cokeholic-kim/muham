@@ -775,7 +775,7 @@ final class WebController
 
     public function adminAiUsers(): never
     {
-        $this->requireAdminUser();
+        $admin = $this->requireAdminUser();
 
         try {
             $users = $this->adminAiUserService->listUsers();
@@ -786,7 +786,7 @@ final class WebController
             $this->flash('danger', $e->getMessage());
         }
 
-        $this->render('AI 사용자 관리', $this->adminAiUsersPage($users, $logs));
+        $this->render('AI 사용자 관리', $this->adminAiUsersPage($users, $logs, (int)$admin['id']));
     }
 
     /**
@@ -821,6 +821,43 @@ final class WebController
         $this->redirect('/admin/ai-users');
     }
 
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function revokeAdminUserAccess(int $userId, array $payload): never
+    {
+        $admin = $this->requireAdminUser();
+
+        if (!$this->validateCsrf($payload)) {
+            $this->flash('danger', '요청 보안 토큰이 올바르지 않습니다.');
+            $this->redirect('/admin/ai-users');
+        }
+
+        if ((int)$admin['id'] === $userId) {
+            $this->flash('danger', '현재 로그인한 관리자 본인의 접속은 차단할 수 없습니다.');
+            $this->redirect('/admin/ai-users');
+        }
+
+        try {
+            $change = $this->adminAiUserService->revokeLoginAccess($userId);
+            $this->auditLogService->record(
+                (int)$admin['id'],
+                $userId,
+                'revoke_user_login_access',
+                'user',
+                $userId,
+                $change['before'],
+                $change['after'],
+                $this->requestContext()
+            );
+            $this->flash('success', '해당 계정의 접속 세션과 자동로그인을 모두 제거했습니다.');
+        } catch (Throwable $e) {
+            $this->flash('danger', $e->getMessage());
+        }
+
+        $this->redirect('/admin/ai-users');
+    }
+
     private function authPage(
         string $title,
         string $action,
@@ -839,6 +876,9 @@ final class WebController
         $returnToField = $returnTo !== '/work-entries'
             ? sprintf('<input type="hidden" name="returnTo" value="%s">', $this->h($returnTo))
             : '';
+        $rememberField = $action === '/login'
+            ? '<div class="form-check mb-3"><input class="form-check-input" id="rememberMe" type="checkbox" name="rememberMe" value="1"><label class="form-check-label" for="rememberMe">자동로그인</label></div>'
+            : '';
 
         return sprintf(
             '<div class="row justify-content-center">
@@ -850,6 +890,7 @@ final class WebController
                         %s
                         <div class="mb-3"><label class="form-label" for="email">이메일</label><input class="form-control" id="email" type="email" name="email" required autocomplete="email"></div>
                         <div class="mb-3"><label class="form-label" for="password">비밀번호</label><input class="form-control" id="password" type="password" name="password" required %s></div>
+                        %s
                         <button class="btn btn-primary w-100" type="submit">%s</button>
                     </form>
                     <div class="mt-3 text-center text-secondary">%s <a href="%s">%s</a></div>
@@ -861,6 +902,7 @@ final class WebController
             $returnToField,
             $nameField,
             $passwordAttributes,
+            $rememberField,
             $this->h($button),
             $this->h($altText),
             $this->h($altHref),
@@ -1392,24 +1434,25 @@ final class WebController
      * @param array<int, array<string, mixed>> $users
      * @param array<int, array<string, mixed>> $logs
      */
-    private function adminAiUsersPage(array $users, array $logs): string
+    private function adminAiUsersPage(array $users, array $logs, int $adminUserId): string
     {
         return sprintf(
             '<div class="d-flex justify-content-between align-items-start gap-3 mb-4 flex-wrap">
-                <div><h1 class="h3 mb-1">AI 사용자 관리</h1><p class="text-secondary mb-0">사용자별 AI 변환 권한과 일일 사용 한도를 관리합니다.</p></div>
+                <div><h1 class="h3 mb-1">AI 사용자 관리</h1><p class="text-secondary mb-0">사용자별 AI 권한과 계정 접속 상태를 관리합니다.</p></div>
                 <a class="btn btn-outline-secondary" href="/work-entries">홈</a>
             </div>
             <section class="border rounded-2 bg-white mb-3">
                 <div class="p-3 border-bottom">
-                    <h2 class="h5 mb-1">사용자 권한</h2>
-                    <p class="text-secondary mb-0">새 사용자는 기본적으로 AI 사용 불가, 일일 한도 0회입니다.</p>
+                    <h2 class="h5 mb-1">사용자 권한과 접속</h2>
+                    <p class="text-secondary mb-0">새 사용자는 기본적으로 AI 사용 불가, 일일 한도 0회입니다. 원치 않는 접속은 세션과 자동로그인을 함께 제거합니다.</p>
                 </div>
-                <div class="table-responsive">
+                <div class="table-responsive d-none d-lg-block">
                     <table class="table table-hover align-middle mb-0">
-                        <thead><tr><th>사용자</th><th>역할</th><th class="text-end">오늘</th><th class="text-end">전체</th><th>최근 사용</th><th class="text-end">권한</th></tr></thead>
+                        <thead><tr><th>사용자</th><th>역할</th><th class="text-end">오늘</th><th class="text-end">전체</th><th>접속</th><th>최근 사용</th><th class="text-end">권한</th></tr></thead>
                         <tbody>%s</tbody>
                     </table>
                 </div>
+                <div class="d-lg-none">%s</div>
             </section>
             <section class="border rounded-2 bg-white">
                 <div class="p-3 border-bottom">
@@ -1423,7 +1466,8 @@ final class WebController
                     </table>
                 </div>
             </section>',
-            $this->adminAiUserRows($users),
+            $this->adminAiUserRows($users, $adminUserId),
+            $this->adminAiUserCards($users, $adminUserId),
             $this->adminAiUsageLogRows($logs)
         );
     }
@@ -1702,10 +1746,10 @@ final class WebController
     /**
      * @param array<int, array<string, mixed>> $users
      */
-    private function adminAiUserRows(array $users): string
+    private function adminAiUserRows(array $users, int $adminUserId): string
     {
         if ($users === []) {
-            return '<tr><td class="text-center text-secondary py-4" colspan="6">사용자가 없습니다.</td></tr>';
+            return '<tr><td class="text-center text-secondary py-4" colspan="7">사용자가 없습니다.</td></tr>';
         }
 
         $rows = '';
@@ -1718,6 +1762,15 @@ final class WebController
             $lastUsedAt = isset($user['last_used_at']) && $user['last_used_at'] !== null
                 ? (string)$user['last_used_at']
                 : '-';
+            $sessionCount = (int)($user['active_session_count'] ?? 0);
+            $rememberCount = (int)($user['active_remember_token_count'] ?? 0);
+            $revokeAction = (int)$user['id'] === $adminUserId
+                ? '<div class="text-secondary small">현재 관리자</div>'
+                : sprintf(
+                    '<form method="post" action="/admin/ai-users/%d/revoke-access" onsubmit="return confirm(\'해당 계정의 모든 접속과 자동로그인을 제거하시겠습니까?\')">%s<button class="btn btn-sm btn-outline-danger" type="submit">접속 차단</button></form>',
+                    (int)$user['id'],
+                    CsrfService::input()
+                );
 
             $rows .= sprintf(
                 '<tr>
@@ -1725,6 +1778,7 @@ final class WebController
                     <td>%s</td>
                     <td class="text-end">%d/%d회<div class="text-secondary small">남은 %d회</div></td>
                     <td class="text-end">%d회</td>
+                    <td><div>세션 %d개</div><div class="text-secondary small">자동로그인 %d개</div>%s</td>
                     <td>%s</td>
                     <td>
                         <form class="d-flex justify-content-end align-items-center gap-2 flex-wrap" method="post" action="/admin/ai-users/%d">
@@ -1747,6 +1801,9 @@ final class WebController
                 $dailyLimit,
                 $remaining,
                 (int)($user['ai_total_usage_count'] ?? 0),
+                $sessionCount,
+                $rememberCount,
+                $revokeAction,
                 $this->h($lastUsedAt),
                 (int)$user['id'],
                 CsrfService::input(),
@@ -1760,6 +1817,88 @@ final class WebController
         }
 
         return $rows;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $users
+     */
+    private function adminAiUserCards(array $users, int $adminUserId): string
+    {
+        if ($users === []) {
+            return '<div class="p-4 text-center text-secondary">사용자가 없습니다.</div>';
+        }
+
+        $cards = '';
+
+        foreach ($users as $user) {
+            $enabled = (int)($user['ai_enabled'] ?? 0) === 1;
+            $dailyLimit = (int)($user['ai_daily_limit'] ?? 0);
+            $usedToday = (int)($user['ai_used_today'] ?? 0);
+            $remaining = max(0, $dailyLimit - $usedToday);
+            $lastUsedAt = isset($user['last_used_at']) && $user['last_used_at'] !== null
+                ? (string)$user['last_used_at']
+                : '-';
+            $sessionCount = (int)($user['active_session_count'] ?? 0);
+            $rememberCount = (int)($user['active_remember_token_count'] ?? 0);
+            $revokeAction = (int)$user['id'] === $adminUserId
+                ? '<div class="text-secondary small">현재 관리자</div>'
+                : sprintf(
+                    '<form method="post" action="/admin/ai-users/%d/revoke-access" onsubmit="return confirm(\'해당 계정의 모든 접속과 자동로그인을 제거하시겠습니까?\')">%s<button class="btn btn-outline-danger w-100" type="submit">접속 차단</button></form>',
+                    (int)$user['id'],
+                    CsrfService::input()
+                );
+
+            $cards .= sprintf(
+                '<article class="p-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+                        <div class="min-w-0">
+                            <h3 class="h6 mb-1 text-break">%s</h3>
+                            <div class="text-secondary small text-break">%s</div>
+                        </div>
+                        <span class="badge text-bg-secondary">%s</span>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6"><div class="border rounded-2 p-2"><div class="text-secondary small">오늘</div><div class="fw-semibold">%d/%d회</div><div class="text-secondary small">남은 %d회</div></div></div>
+                        <div class="col-6"><div class="border rounded-2 p-2"><div class="text-secondary small">전체</div><div class="fw-semibold">%d회</div><div class="text-secondary small">최근 %s</div></div></div>
+                        <div class="col-6"><div class="border rounded-2 p-2"><div class="text-secondary small">세션</div><div class="fw-semibold">%d개</div></div></div>
+                        <div class="col-6"><div class="border rounded-2 p-2"><div class="text-secondary small">자동로그인</div><div class="fw-semibold">%d개</div></div></div>
+                    </div>
+                    <form class="d-grid gap-2" method="post" action="/admin/ai-users/%d">
+                        %s
+                        <input type="hidden" name="aiEnabled" value="0">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" id="aiEnabledMobile%d" type="checkbox" name="aiEnabled" value="1"%s>
+                            <label class="form-check-label small" for="aiEnabledMobile%d">AI 사용 허용</label>
+                        </div>
+                        <label class="form-label small mb-0" for="aiDailyLimitMobile%d">일일 한도</label>
+                        <input class="form-control text-end" id="aiDailyLimitMobile%d" type="number" min="0" max="10000" name="aiDailyLimit" value="%d">
+                        <button class="btn btn-primary" type="submit">권한 저장</button>
+                    </form>
+                    <div class="mt-2">%s</div>
+                </article>',
+                $this->h((string)$user['name']),
+                $this->h((string)$user['email']),
+                $this->h((string)$user['role']),
+                $usedToday,
+                $dailyLimit,
+                $remaining,
+                (int)($user['ai_total_usage_count'] ?? 0),
+                $this->h($lastUsedAt),
+                $sessionCount,
+                $rememberCount,
+                (int)$user['id'],
+                CsrfService::input(),
+                (int)$user['id'],
+                $enabled ? ' checked' : '',
+                (int)$user['id'],
+                (int)$user['id'],
+                (int)$user['id'],
+                $dailyLimit,
+                $revokeAction
+            );
+        }
+
+        return $cards;
     }
 
     /**

@@ -24,10 +24,25 @@ final class AdminAiUserService
                 u.ai_enabled,
                 u.ai_daily_limit,
                 u.created_at,
+                COALESCE(active_sessions.active_count, 0) AS active_session_count,
+                COALESCE(active_remember_tokens.active_count, 0) AS active_remember_token_count,
                 COALESCE(today_usage.used_count, 0) AS ai_used_today,
                 COALESCE(total_usage.total_count, 0) AS ai_total_usage_count,
                 last_usage.last_used_at
             FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS active_count
+                FROM sessions
+                WHERE expires_at > NOW()
+                  AND last_seen_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+                GROUP BY user_id
+            ) active_sessions ON active_sessions.user_id = u.id
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS active_count
+                FROM remember_tokens
+                WHERE expires_at > NOW()
+                GROUP BY user_id
+            ) active_remember_tokens ON active_remember_tokens.user_id = u.id
             LEFT JOIN (
                 SELECT user_id, COUNT(*) AS used_count
                 FROM ai_usage_logs
@@ -127,6 +142,28 @@ final class AdminAiUserService
     }
 
     /**
+     * @return array{before: array<string, mixed>, after: array<string, mixed>}
+     */
+    public function revokeLoginAccess(int $userId): array
+    {
+        return Database::transaction(function (PDO $pdo) use ($userId): array {
+            $user = $this->findUserForUpdate($pdo, $userId);
+            $before = $this->loginAccessState($pdo, $user);
+
+            $statement = $pdo->prepare('DELETE FROM sessions WHERE user_id = :user_id');
+            $statement->execute(['user_id' => $userId]);
+
+            $statement = $pdo->prepare('DELETE FROM remember_tokens WHERE user_id = :user_id');
+            $statement->execute(['user_id' => $userId]);
+
+            return [
+                'before' => $before,
+                'after' => $this->loginAccessState($pdo, $user),
+            ];
+        });
+    }
+
+    /**
      * @param array<string, mixed> $payload
      */
     private function dailyLimitFromPayload(array $payload): int
@@ -179,7 +216,42 @@ final class AdminAiUserService
         $user['ai_daily_limit'] = (int)($user['ai_daily_limit'] ?? 0);
         $user['ai_used_today'] = (int)($user['ai_used_today'] ?? 0);
         $user['ai_total_usage_count'] = (int)($user['ai_total_usage_count'] ?? 0);
+        $user['active_session_count'] = (int)($user['active_session_count'] ?? 0);
+        $user['active_remember_token_count'] = (int)($user['active_remember_token_count'] ?? 0);
 
         return $user;
+    }
+
+    /**
+     * @param array<string, mixed> $user
+     * @return array<string, mixed>
+     */
+    private function loginAccessState(PDO $pdo, array $user): array
+    {
+        $sessionStatement = $pdo->prepare(
+            'SELECT COUNT(*) AS count
+            FROM sessions
+            WHERE user_id = :user_id'
+        );
+        $sessionStatement->execute(['user_id' => (int)$user['id']]);
+        $sessionRow = $sessionStatement->fetch(PDO::FETCH_ASSOC);
+        $sessionCount = is_array($sessionRow) ? (int)($sessionRow['count'] ?? 0) : 0;
+
+        $tokenStatement = $pdo->prepare(
+            'SELECT COUNT(*) AS count
+            FROM remember_tokens
+            WHERE user_id = :user_id'
+        );
+        $tokenStatement->execute(['user_id' => (int)$user['id']]);
+        $tokenRow = $tokenStatement->fetch(PDO::FETCH_ASSOC);
+        $tokenCount = is_array($tokenRow) ? (int)($tokenRow['count'] ?? 0) : 0;
+
+        return [
+            'id' => (int)$user['id'],
+            'email' => (string)$user['email'],
+            'role' => (string)$user['role'],
+            'session_count' => $sessionCount,
+            'remember_token_count' => $tokenCount,
+        ];
     }
 }
